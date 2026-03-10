@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>骨骼健康趨勢</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, Arial, sans-serif; background-color: #f4f7f6; padding: 15px; }
+
+        .header {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .header h2 { font-size: 1.1rem; color: #333; }
+        .header p  { font-size: 0.8rem; color: #888; margin-top: 4px; }
+
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* 三色狀態說明 */
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 14px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex; align-items: center; gap: 5px;
+            font-size: 0.75rem; color: #555;
+        }
+        .legend-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+        }
+
+        /* 狀態摘要卡片 */
+        .status-summary {
+            margin-top: 16px;
+            border-radius: 10px;
+            padding: 16px;
+            border-left: 5px solid #28a745;
+            background: #eafbea;
+        }
+        .status-summary.yellow { background: #fff8e1; border-color: #ffc107; }
+        .status-summary.red    { background: #fdecea; border-color: #dc3545; }
+
+        .status-title {
+            font-weight: bold;
+            font-size: 1rem;
+            color: #155724;
+        }
+        .status-summary.yellow .status-title { color: #856404; }
+        .status-summary.red    .status-title { color: #721c24; }
+
+        .status-desc {
+            color: #155724;
+            margin-top: 6px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .status-summary.yellow .status-desc { color: #856404; }
+        .status-summary.red    .status-desc { color: #721c24; }
+
+        /* 骨骼動力條 */
+        .power-label { font-size: 0.8rem; color: #666; margin-top: 16px; }
+        .power-bar-bg {
+            background: #eee;
+            border-radius: 8px;
+            height: 14px;
+            margin: 6px 0 4px;
+            overflow: hidden;
+        }
+        .power-bar-fill {
+            height: 100%;
+            border-radius: 8px;
+            transition: width .6s ease;
+        }
+        .power-scale {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: #aaa;
+        }
+
+        /* 無資料狀態 */
+        .no-data {
+            text-align: center;
+            color: #aaa;
+            padding: 40px 20px;
+            font-size: 0.95rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2>PINP 數據趨勢</h2>
+    <p>近期骨骼健康監測紀錄</p>
+</div>
+
+<div class="chart-container">
+    <canvas id="bonePowerChart"></canvas>
+    <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#28a745"></div>生長中 (&gt;50)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ffc107"></div>穩定 (25–50)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#dc3545"></div>需警示 (&lt;25)</div>
+    </div>
+</div>
+
+<div class="status-summary" id="statusBox">
+    <div class="status-title" id="statusTitle">載入中…</div>
+    <div class="status-desc" id="statusDesc"></div>
+
+    <div class="power-label">骨骼動力條</div>
+    <div class="power-bar-bg">
+        <div class="power-bar-fill" id="powerBarFill" style="width:0%;background:#28a745"></div>
+    </div>
+    <div class="power-scale">
+        <span>0</span><span>25</span><span>50</span><span>75</span><span>100 ng/mL</span>
+    </div>
+</div>
+
+<script>
+    const LIFF_ID = "YOUR_LIFF_ID"; // ← 請替換為實際 LIFF ID
+
+    const COLOR_MAP = {
+        green:  "#28a745",
+        yellow: "#ffc107",
+        red:    "#dc3545",
+    };
+
+    const STATUS_INFO = {
+        green:  {
+            title: "目前狀態：良好的藥效反應 ✅",
+            desc:  "根據近期數據，PINP 濃度良好，顯示骨骼正在有效生長，藥效反應佳。請保持目前的藥物與生活習慣。此報告可作為下次診間回診時的參考數據。",
+            cls:   "",
+        },
+        yellow: {
+            title: "目前狀態：骨骼狀態穩定 🟡",
+            desc:  "PINP 濃度維持在穩定範圍，繼續遵照醫師指示用藥，定期監測即可。",
+            cls:   "yellow",
+        },
+        red: {
+            title: "⚠️ 目前狀態：需警示",
+            desc:  "PINP 濃度偏低，建議儘快聯絡主治醫師評估是否需要調整藥物療程。",
+            cls:   "red",
+        },
+    };
+
+    // 初始化 Chart.js（空圖先建立，資料載入後填入）
+    const ctx = document.getElementById("bonePowerChart").getContext("2d");
+    const myChart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [{
+                label: "PINP 濃度",
+                data: [],
+                borderColor: "#28a745",
+                backgroundColor: "rgba(40, 167, 69, 0.1)",
+                borderWidth: 3,
+                pointRadius: 7,
+                pointBackgroundColor: [],
+                fill: true,
+                tension: 0.3,
+            }],
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    suggestedMax: 100,
+                    title: { display: true, text: "ng/mL" },
+                },
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: "rgba(0,0,0,0.75)",
+                    titleFont: { size: 14 },
+                    callbacks: {
+                        label: ctx => ` ${ctx.parsed.y} ng/mL`,
+                    },
+                },
+            },
+        },
+    });
+
+    async function loadTrendData(userId) {
+        const response = await fetch(`/api/history/${encodeURIComponent(userId)}`);
+        if (!response.ok) throw new Error("API 錯誤");
+        const data = await response.json();
+
+        if (!data || data.length === 0) {
+            document.getElementById("statusTitle").textContent = "尚無檢測記錄";
+            document.getElementById("statusDesc").textContent = "請先完成首次 PINP 試紙檢測。";
+            return;
+        }
+
+        const labels   = data.map(d => d.date);
+        const values   = data.map(d => d.concentration);
+        const ptColors = data.map(d => COLOR_MAP[d.color] || "#28a745");
+        const lastColor = data[data.length - 1].color;
+        const lastValue = values[values.length - 1];
+
+        // 填入圖表
+        myChart.data.labels = labels;
+        myChart.data.datasets[0].data = values;
+        myChart.data.datasets[0].pointBackgroundColor = ptColors;
+        myChart.data.datasets[0].borderColor = COLOR_MAP[lastColor] || "#28a745";
+        myChart.data.datasets[0].backgroundColor =
+            `${COLOR_MAP[lastColor] || "#28a745"}1a`; // 10% opacity
+        myChart.update();
+
+        // 更新狀態摘要
+        const info = STATUS_INFO[lastColor] || STATUS_INFO.green;
+        const box  = document.getElementById("statusBox");
+        box.className = `status-summary ${info.cls}`;
+        document.getElementById("statusTitle").textContent = info.title;
+        document.getElementById("statusDesc").textContent  = info.desc;
+
+        // 骨骼動力條
+        const fill = document.getElementById("powerBarFill");
+        fill.style.background = COLOR_MAP[lastColor];
+        fill.style.width = Math.min(100, Math.round(lastValue)) + "%";
+    }
+
+    async function main() {
+        try {
+            await liff.init({ liffId: LIFF_ID });
+            if (!liff.isLoggedIn()) { liff.login(); return; }
+            const profile = await liff.getProfile();
+            await loadTrendData(profile.userId);
+        } catch (e) {
+            console.error(e);
+            document.getElementById("statusTitle").textContent = "無法載入資料";
+            document.getElementById("statusDesc").textContent  = "請確認網路連線，或重新開啟此頁面。";
+        }
+    }
+
+    main();
+</script>
+
+</body>
+</html>
