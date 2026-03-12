@@ -1,12 +1,8 @@
 import datetime
 import os
 
-from dotenv import load_dotenv
-load_dotenv()  # 從 .env 載入機密環境變數
-
-from fastapi import FastAPI, Request, Depends, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -14,11 +10,12 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, TextMessage, FlexMessage, FlexContainer
 )
-from linebot.v3.webhooks import MessageEvent, ImageMessageContent
+from linebot.v3.webhooks import MessageEvent, ImageMessageContent, TextMessageContent, FollowEvent
 
 from database import SessionLocal, engine
 import models
 import processor
+import templates
 
 # 確保資料表已建立
 models.Base.metadata.create_all(bind=engine)
@@ -28,11 +25,22 @@ app = FastAPI(title="Epoch PINP 骨骼健康監測系統")
 # 掛載靜態檔案 (LIFF 頁面)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# LINE Bot 設定（金鑰從環境變數 / .env 檔案載入，請勿硬編碼）
-configuration = Configuration(
-    access_token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+# LIFF 趨勢圖 URL（在 LINE Developers Console 取得 LIFF ID 後填入 .env）
+TRENDS_LIFF_URL = os.getenv(
+    "TRENDS_LIFF_URL",
+    "https://liff.line.me/YOUR_TRENDS_LIFF_ID",
 )
-handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
+
+# LINE Bot 設定（金鑰建議透過環境變數注入）
+configuration = Configuration(
+    access_token=os.getenv(
+        "LINE_CHANNEL_ACCESS_TOKEN",
+        "B5WyfxGzkQeux13b5JsRzMlKqnPrdkijHva91lNI5l+5Gbd66MoZYSQsn1Rt49ulTU7jWaYrRxHcquLXiMNUa9f1On83mWHG2CUGAovLD01OChndBLvs2FUJtGoqLmdyelABf7MTxzCo8Zou6GcqlwdB04t89/1O/w1cDnyilFU="
+    )
+)
+handler = WebhookHandler(
+    os.getenv("LINE_CHANNEL_SECRET", "02dba6286426db7cf24ca10b1cd09ed4")
+)
 
 
 # ── 資料庫依賴項 ────────────────────────────────────────────────────────────────
@@ -47,201 +55,49 @@ def get_db():
 
 # ── 輔助函式 ────────────────────────────────────────────────────────────────────
 
-STATUS_CONFIG = {
-    "green":  {
-        "label": "骨骼生長良好",
-        "emoji": "✅",
-        "color": "#28a745",
-        "bg":    "#eafbea",
-        "desc":  "PINP 濃度良好，顯示骨骼正在有效生長，藥效反應佳。",
-    },
-    "yellow": {
-        "label": "骨骼狀態穩定",
-        "emoji": "🟡",
-        "color": "#ffc107",
-        "bg":    "#fff8e1",
-        "desc":  "數值穩定，維持目前治療方案，定期監測即可。",
-    },
-    "red": {
-        "label": "需警示，建議諮詢醫師",
-        "emoji": "⚠️",
-        "color": "#dc3545",
-        "bg":    "#fdecea",
-        "desc":  "PINP 濃度偏低，建議儘快聯絡主治醫師評估調整藥方。",
-    },
-}
-
-
-def _build_flex_contents(concentration: float, status_color: str) -> dict:
-    """建立骨骼動力條 Flex Message 內容"""
-    cfg = STATUS_CONFIG.get(status_color, STATUS_CONFIG["red"])
-    return {
-        "type": "bubble",
-        "size": "mega",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "backgroundColor": cfg["color"],
-            "paddingAll": "16px",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "骨骼健康檢測報告",
-                    "color": "#ffffff",
-                    "weight": "bold",
-                    "size": "lg",
-                },
-                {
-                    "type": "text",
-                    "text": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "color": "#ffffff",
-                    "size": "sm",
-                    "margin": "sm",
-                },
-            ],
-        },
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "md",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": f"PINP 濃度",
-                    "color": "#888888",
-                    "size": "sm",
-                },
-                {
-                    "type": "text",
-                    "text": f"{concentration} ng/mL",
-                    "size": "3xl",
-                    "weight": "bold",
-                    "color": cfg["color"],
-                },
-                {
-                    "type": "separator",
-                    "margin": "md",
-                },
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "margin": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": cfg["emoji"],
-                            "size": "xl",
-                            "flex": 0,
-                        },
-                        {
-                            "type": "text",
-                            "text": cfg["label"],
-                            "weight": "bold",
-                            "color": cfg["color"],
-                            "margin": "sm",
-                        },
-                    ],
-                },
-                {
-                    "type": "text",
-                    "text": cfg["desc"],
-                    "wrap": True,
-                    "color": "#555555",
-                    "size": "sm",
-                    "margin": "sm",
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "margin": "lg",
-                    "backgroundColor": "#f0f0f0",
-                    "cornerRadius": "8px",
-                    "paddingAll": "4px",
-                    "contents": [
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "backgroundColor": cfg["color"],
-                            "cornerRadius": "6px",
-                            "height": "12px",
-                            "width": f"{min(100, int(concentration))}%",
-                            "contents": [],
-                        }
-                    ],
-                },
-            ],
-        },
-    }
-
-
-def send_result_flex(reply_token: str, concentration: float, status_color: str):
-    """推播 PINP 檢測結果 Flex Message 給使用者"""
-    try:
-        flex_contents = _build_flex_contents(concentration, status_color)
-        with ApiClient(configuration) as api_client:
-            MessagingApi(api_client).reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[
-                        FlexMessage(
-                            alt_text=f"PINP 濃度：{concentration} ng/mL",
-                            contents=FlexContainer.from_dict(flex_contents),
-                        )
-                    ],
-                )
-            )
-    except Exception as e:
-        print(f"Flex Message 發送失敗，改以文字回覆: {e}")
-        cfg = STATUS_CONFIG.get(status_color, STATUS_CONFIG["red"])
-        fallback_text = (
-            f"✅ 檢測完成！\nPINP 濃度：{concentration} ng/mL\n狀態：{cfg['emoji']} {cfg['label']}"
-        )
-        with ApiClient(configuration) as api_client:
-            MessagingApi(api_client).reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(text=fallback_text)],
-                )
-            )
-
-
-def _save_record(
-    db: Session,
-    line_user_id: str,
-    result: dict,
+def send_result_flex(
+    reply_token: str,
+    concentration: float,
     status_color: str,
-    image_path: str,
-    device_info: str = "",
+    patient_name: str = "使用者",
 ):
-    """建立或取得 User/Patient，並儲存本次檢測紀錄"""
-    user = db.query(models.User).filter(
-        models.User.line_user_id == line_user_id
-    ).first()
-    if not user:
-        user = models.User(line_user_id=line_user_id, display_name="")
-        db.add(user)
-        db.flush()
-
-    if not user.patients:
-        patient = models.Patient(
-            name="預設病患", age=0, medication="", caregiver_id=user.id
-        )
-        db.add(patient)
-        db.flush()
-    else:
-        patient = user.patients[0]
-
-    new_record = models.DetectionRecord(
-        patient_id=patient.id,
-        concentration=result["concentration"],
-        gray_value=result["gray_value"],
+    """
+    推播 PINP 骨骼健康報告 Flex Message 給使用者。
+    Flex Message JSON 由 templates.build_result_flex() 動態組裝。
+    """
+    flex_dict = templates.build_result_flex(
+        concentration=concentration,
         status_color=status_color,
-        image_path=image_path,
-        device_info=device_info,
-        detected_at=datetime.datetime.utcnow(),
+        patient_name=patient_name,
+        liff_trends_url=TRENDS_LIFF_URL,
     )
-    db.add(new_record)
-    db.commit()
+    flex_message = FlexMessage(
+        alt_text=f"您的骨骼健康報告｜PINP {concentration:.1f} ng/mL",
+        contents=FlexContainer.from_dict(flex_dict),
+    )
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[flex_message],
+            )
+        )
+
+
+# ── Onboarding 狀態（記憶體，伺服器重啟後清空；MVP 夠用）──────────────────────
+# key: line_user_id, value: True 代表正在等待使用者輸入受檢者姓名
+_pending_name: dict[str, bool] = {}
+
+
+def _reply_text(reply_token: str, text: str) -> None:
+    """快速回覆純文字訊息的輔助函式"""
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=text)],
+            )
+        )
 
 
 # ── LINE Webhook ────────────────────────────────────────────────────────────────
@@ -257,12 +113,126 @@ async def callback(request: Request):
     return {"status": "ok"}
 
 
+@handler.add(FollowEvent)
+def handle_follow(event):
+    """
+    使用者將 Bot 加為好友時觸發。
+    建立 User 記錄並進入 Onboarding：詢問受檢者姓名。
+    """
+    db = SessionLocal()
+    try:
+        line_user_id = event.source.user_id
+        user = db.query(models.User).filter(
+            models.User.line_user_id == line_user_id
+        ).first()
+        if not user:
+            user = models.User(line_user_id=line_user_id, display_name="")
+            db.add(user)
+            db.commit()
+        # 標記為等待輸入姓名
+        _pending_name[line_user_id] = True
+        _reply_text(
+            event.reply_token,
+            "👋 您好！歡迎使用 Epoch PINP 骨骼健康監測系統。\n\n"
+            "請先告訴我受檢者的姓名（例如：王大明 先生），"
+            "之後的健康報告會顯示此姓名供醫師辨識。\n\n"
+            "📝 請直接回覆姓名：",
+        )
+    except Exception as e:
+        print(f"handle_follow 錯誤: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_text(event):
+    """
+    處理使用者傳送的文字訊息。
+    - 若正在等待輸入姓名 → 儲存姓名，完成 Onboarding
+    - 否則 → 顯示使用說明
+    """
+    db = SessionLocal()
+    try:
+        line_user_id = event.source.user_id
+        text = event.message.text.strip()
+
+        # ── 特殊指令：重新設定姓名 ──
+        if text in ("重設姓名", "改名", "設定姓名"):
+            _pending_name[line_user_id] = True
+            _reply_text(event.reply_token, "📝 請輸入新的受檢者姓名：")
+            return
+
+        # ── Onboarding：等待使用者輸入姓名 ──
+        if _pending_name.get(line_user_id):
+            user = db.query(models.User).filter(
+                models.User.line_user_id == line_user_id
+            ).first()
+            if not user:
+                user = models.User(line_user_id=line_user_id, display_name="")
+                db.add(user)
+                db.flush()
+
+            if not user.patients:
+                patient = models.Patient(
+                    name=text, age=0, medication="", caregiver_id=user.id
+                )
+                db.add(patient)
+            else:
+                # 更新既有病患姓名
+                user.patients[0].name = text
+
+            db.commit()
+            _pending_name.pop(line_user_id, None)
+            _reply_text(
+                event.reply_token,
+                f"✅ 已設定受檢者姓名為「{text}」。\n\n"
+                "接下來請傳送試紙照片，系統會自動分析並產生骨骼健康報告！",
+            )
+            return
+
+        # ── 一般文字：顯示使用說明 ──
+        user = db.query(models.User).filter(
+            models.User.line_user_id == line_user_id
+        ).first()
+        name = (
+            user.patients[0].name
+            if user and user.patients
+            else "尚未設定"
+        )
+        _reply_text(
+            event.reply_token,
+            f"🦴 Epoch PINP 骨骼健康監測系統\n"
+            f"目前受檢者：{name}\n\n"
+            "📷 傳送試紙照片 → 自動 AI 判讀並產生報告\n"
+            "📊 查看歷史趨勢 → 點選選單「歷史數據」\n"
+            "✏️ 修改受檢者姓名 → 輸入「重設姓名」",
+        )
+    except Exception as e:
+        print(f"handle_text 錯誤: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image(event):
     """當使用者傳送試紙照片時觸發"""
     db = SessionLocal()
     try:
         line_user_id = event.source.user_id
+
+        # 0. 確認 Onboarding 已完成（有受檢者姓名）
+        user = db.query(models.User).filter(
+            models.User.line_user_id == line_user_id
+        ).first()
+        if not user or not user.patients or user.patients[0].name in ("", "預設病患"):
+            _pending_name[line_user_id] = True
+            _reply_text(
+                event.reply_token,
+                "📝 請先設定受檢者姓名再進行檢測。\n直接回覆姓名即可（例如：王大明 先生）：",
+            )
+            return
 
         # 1. 從 LINE 下載影像
         with ApiClient(configuration) as api_client:
@@ -276,30 +246,34 @@ def handle_image(event):
         with open(image_path, "wb") as f:
             f.write(image_bytes)
 
-        # 2. AI 影像分析：識別 T/C 線並計算濃度
+        # 2. AI 影像分析：識別 T/C 線並計算濃度 (R^2 = 0.99)
         result = processor.analyze_pinp_strip(event.message.id, image_bytes)
-
-        # C 線無效 → 告知使用者重拍
-        if not result.get("c_valid", True):
-            with ApiClient(configuration) as api_client:
-                MessagingApi(api_client).reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(
-                            text="⚠️ 檢測無效：C 線（控制線）顯色不足，可能是血清量不足或反應時間未到。\n請依步驟重新操作後再拍照。"
-                        )],
-                    )
-                )
-            return
 
         # 3. 判斷狀態顏色：綠 (生長)、黃 (穩定)、紅 (需警示)
         status_color = processor.determine_status(result["concentration"])
 
-        # 4. 儲存紀錄
-        _save_record(db, line_user_id, result, status_color, image_path)
+        # 4. (Onboarding 保證 user 與 patient 已存在，直接使用)
 
-        # 5. 推播 Flex Message 結果
-        send_result_flex(event.reply_token, result["concentration"], status_color)
+        # 5. 儲存檢測紀錄
+        new_record = models.DetectionRecord(
+            patient_id=user.patients[0].id,
+            concentration=result["concentration"],
+            gray_value=result["gray_value"],
+            status_color=status_color,
+            image_path=image_path,
+            detected_at=datetime.datetime.utcnow(),
+        )
+        db.add(new_record)
+        db.commit()
+
+        # 6. 推播 Flex Message 結果卡片
+        patient_name = user.patients[0].name if user.patients else "使用者"
+        send_result_flex(
+            event.reply_token,
+            result["concentration"],
+            status_color,
+            patient_name=patient_name,
+        )
 
     except Exception as e:
         print(f"處理影像錯誤: {e}")
@@ -310,56 +284,9 @@ def handle_image(event):
 
 # ── REST API (供 LIFF 趨勢圖表使用) ────────────────────────────────────────────
 
-@app.post("/api/upload")
-async def upload_image(
-    file: UploadFile = File(...),
-    line_user_id: str = "",
-    device_info: str = "",
-    db: Session = Depends(get_db),
-):
-    """
-    LIFF 直接上傳試紙照片的端點。
-    前端透過 FormData 以 POST 傳送，欄位：file, line_user_id, device_info。
-    """
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="只接受圖片檔案")
-
-    image_bytes = await file.read()
-
-    # 儲存原始影像
-    os.makedirs("images", exist_ok=True)
-    safe_filename = os.path.basename(file.filename or "upload.jpg")
-    image_path = f"images/liff_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{safe_filename}"
-    with open(image_path, "wb") as f:
-        f.write(image_bytes)
-
-    # AI 影像分析
-    result = processor.analyze_pinp_strip("liff_upload", image_bytes)
-
-    if not result.get("c_valid", True):
-        return JSONResponse(
-            status_code=422,
-            content={"error": "invalid_cline", "message": "C 線顯色不足，請重新操作後再拍照。"},
-        )
-
-    status_color = processor.determine_status(result["concentration"])
-
-    if line_user_id:
-        _save_record(db, line_user_id, result, status_color, image_path, device_info)
-
-    cfg = STATUS_CONFIG[status_color]
-    return {
-        "concentration": result["concentration"],
-        "status_color": status_color,
-        "status_label": cfg["label"],
-        "status_emoji": cfg["emoji"],
-        "description": cfg["desc"],
-    }
-
-
 @app.get("/api/history/{line_user_id}")
 async def get_history(line_user_id: str, db: Session = Depends(get_db)):
-    """回傳使用者最近 12 筆 PINP 檢測記錄（供 LIFF 趨勢圖表使用）"""
+    """回傳使用者最近 10 筆 PINP 檢測記錄"""
     user = db.query(models.User).filter(
         models.User.line_user_id == line_user_id
     ).first()
@@ -370,7 +297,7 @@ async def get_history(line_user_id: str, db: Session = Depends(get_db)):
         db.query(models.DetectionRecord)
         .filter(models.DetectionRecord.patient_id == user.patients[0].id)
         .order_by(models.DetectionRecord.detected_at.asc())
-        .limit(12)
+        .limit(10)
         .all()
     )
 
