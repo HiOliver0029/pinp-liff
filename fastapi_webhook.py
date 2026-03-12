@@ -1,14 +1,16 @@
 import datetime
 import os
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, UploadFile, File, Form, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
-    ReplyMessageRequest, TextMessage, FlexMessage, FlexContainer
+    ReplyMessageRequest, PushMessageRequest,
+    TextMessage, FlexMessage, FlexContainer
 )
 from linebot.v3.webhooks import MessageEvent, ImageMessageContent, TextMessageContent, FollowEvent
 
@@ -79,6 +81,35 @@ def send_result_flex(
         MessagingApi(api_client).reply_message(
             ReplyMessageRequest(
                 reply_token=reply_token,
+                messages=[flex_message],
+            )
+        )
+
+
+def push_result_flex(
+    line_user_id: str,
+    concentration: float,
+    status_color: str,
+    patient_name: str = "使用者",
+):
+    """
+    主動推播 Flex Message 給指定 LINE 使用者（用於 LIFF 上傳後回報結果）。
+    使用 Push Message API（不需要 reply_token）。
+    """
+    flex_dict = templates.build_result_flex(
+        concentration=concentration,
+        status_color=status_color,
+        patient_name=patient_name,
+        liff_trends_url=TRENDS_LIFF_URL,
+    )
+    flex_message = FlexMessage(
+        alt_text=f"您的骨骼健康報告｜PINP {concentration:.1f} ng/mL",
+        contents=FlexContainer.from_dict(flex_dict),
+    )
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).push_message(
+            PushMessageRequest(
+                to=line_user_id,
                 messages=[flex_message],
             )
         )
@@ -283,6 +314,91 @@ def handle_image(event):
 
 
 # ── REST API (供 LIFF 趨勢圖表使用) ────────────────────────────────────────────
+
+_STATUS_DESCRIPTIONS = {
+    "green":  "骨鬆藥物反應良好，骨骼正在積極生長。請維持目前的用藥習慣。",
+    "yellow": "骨骼狀態穩定，建議繼續追蹤觀察並定期檢測。",
+    "red":    "骨骼生長指數偏低，建議儘快諮詢骨科醫師評估治療方案。",
+}
+
+
+@app.post("/api/upload")
+async def upload_image(
+    file: UploadFile = File(...),
+    line_user_id: str = Form(default=None),
+    device_info: str = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    """
+    LIFF 直接上傳試紙照片的端點。
+    1. AI 影像判讀（白平衡 → C 線驗證 → T/C 比值換算）
+    2. 儲存檢測紀錄至資料庫（若有 line_user_id）
+    3. 透過 LINE Push API 主動推播 Flex Message 給使用者
+    4. 回傳 JSON 供 LIFF 頁面即時顯示結果
+    """
+    image_bytes = await file.read()
+
+    # 儲存影像
+    os.makedirs("images", exist_ok=True)
+    image_path = f"images/liff_{os.urandom(8).hex()}.jpg"
+    with open(image_path, "wb") as f:
+        f.write(image_bytes)
+
+    # AI 分析
+    result = processor.analyze_pinp_strip(image_path, image_bytes)
+
+    if not result.get("c_valid", True):
+        return JSONResponse(
+            status_code=422,
+            content={"message": "C 線無效，請確認血清量是否足夠，並重新操作後再拍攝。"},
+        )
+
+    status_color = processor.determine_status(result["concentration"])
+    patient_name = "使用者"
+
+    # 儲存至資料庫 + 推播 Flex Message
+    if line_user_id:
+        user = db.query(models.User).filter(
+            models.User.line_user_id == line_user_id
+        ).first()
+        if not user:
+            user = models.User(line_user_id=line_user_id, display_name="")
+            db.add(user)
+            db.flush()
+
+        if not user.patients:
+            patient = models.Patient(
+                name="使用者", age=0, medication="", caregiver_id=user.id
+            )
+            db.add(patient)
+            db.flush()
+
+        patient_name = user.patients[0].name or "使用者"
+
+        record = models.DetectionRecord(
+            patient_id=user.patients[0].id,
+            concentration=result["concentration"],
+            gray_value=result["gray_value"],
+            status_color=status_color,
+            image_path=image_path,
+            device_info=device_info,
+            detected_at=datetime.datetime.utcnow(),
+        )
+        db.add(record)
+        db.commit()
+
+        # 推播 Flex Message 到 LINE 聊天室
+        try:
+            push_result_flex(line_user_id, result["concentration"], status_color, patient_name)
+        except Exception as push_err:
+            # Push 失敗不影響 LIFF 結果顯示
+            print(f"[WARN] push_result_flex 失敗: {push_err}")
+
+    return {
+        "concentration": result["concentration"],
+        "status_color": status_color,
+        "description": _STATUS_DESCRIPTIONS.get(status_color, ""),
+    }
 
 @app.get("/api/history/{line_user_id}")
 async def get_history(line_user_id: str, db: Session = Depends(get_db)):

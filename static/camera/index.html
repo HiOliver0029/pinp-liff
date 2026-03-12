@@ -298,8 +298,14 @@
                 💡 光線偵測：環境偏暗，建議開啟閃光燈或移至明亮處再拍攝。
             </div>
         </div>
+        <!-- 相機拍照：capture="environment" 將直接開啟後鏡頭 -->
         <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
-        <button class="btn" id="captureBtn" onclick="triggerCamera()">📷 啟動相機拍照</button>
+        <!-- 相尊上傳：不帶 capture 屬性，允許選擇相簿中的照片 -->
+        <input type="file" id="galleryInput" accept="image/*" style="display:none">
+        <div style="display:flex;gap:10px;margin-top:16px;">
+            <button class="btn" style="flex:1;" onclick="triggerCamera()">📷 相機拍照</button>
+            <button class="btn secondary" style="flex:1;" onclick="triggerGallery()">🖼️ 相簿上傳</button>
+        </div>
     </div>
 
     <!-- Step 4：結果 -->

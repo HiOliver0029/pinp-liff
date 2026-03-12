@@ -99,8 +99,13 @@ function triggerCamera() {
     document.getElementById("cameraInput").click();
 }
 
+function triggerGallery() {
+    document.getElementById("galleryInput").click();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("cameraInput").addEventListener("change", handleFileSelected);
+    document.getElementById("galleryInput").addEventListener("change", handleFileSelected);
 });
 
 async function handleFileSelected(e) {
@@ -153,7 +158,8 @@ async function handleFileSelected(e) {
     }
 
     // 清空，允許再次選同一檔案
-    e.target.value = "";
+    document.getElementById("cameraInput").value = "";
+    document.getElementById("galleryInput").value = "";
 }
 
 /* ── 顯示結果 ────────────────────────────────────────────── */
