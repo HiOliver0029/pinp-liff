@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>骨骼健康趨勢</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 15px; }
+        .chart-container { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .status-summary { margin-top: 20px; background: #eafbea; border-radius: 8px; padding: 15px; border-left: 5px solid #28a745; }
+        .status-title { font-weight: bold; color: #155724; font-size: 1.1em; }
+        .status-desc { color: #155724; margin-top: 5px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+
+<div class="chart-container">
+    <h3 style="text-align: center; color: #333;">PINP 數據趨勢 ( ng/mL )</h3>
+    <canvas id="bonePowerChart"></canvas>
+</div>
+
+<div class="status-summary">
+    <div class="status-title">目前狀態：良好的藥效反應 (綠色)</div>
+    <div class="status-desc">根據近 3 個月數據，PINP 濃度穩定增加，顯示骨骼正在有效生長。請保持目前的藥物與生活習慣。此報告可作為下次診間回診時的參考數據。</div>
+</div>
+
+<script>
+    const ctx = document.getElementById('bonePowerChart').getContext('2d');
+    
+    // 模擬數據 (此處應與後端資料庫串接)
+    const pinpData = [
+        { date: '2024-01', concentration: 35.2 },
+        { date: '2024-02', concentration: 48.1 },
+        { date: '2024-03', concentration: 65.5 }, // 今日檢測
+    ];
+
+    // Chart.js 相關設定
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: pinpData.map(d => d.date),
+            datasets: [{
+                label: 'PINP 濃度',
+                data: pinpData.map(d => d.concentration),
+                borderColor: '#28a745', // 生長區使用綠色
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                borderWidth: 3,
+                pointRadius: 6,
+                pointBackgroundColor: '#28a745',
+                fill: true,
+                tension: 0.3 // 使線條平滑
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'ng/mL' },
+                    suggestedMax: 100 // 可根據論文標準調整上限
+                }
+            },
+            plugins: {
+                legend: { display: false }, //MVP 階段隱藏圖例以節省空間
+                tooltip: { backgroundColor: 'rgba(0,0,0,0.7)', titleFont: { size: 16 } }
+            }
+        }
+    });
+</script>
+
+</body>
+</html>

@@ -3,71 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>骨骼健康趨勢</title>
+    <title>歷史數據回顧</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 15px; }
-        .chart-container { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .status-summary { margin-top: 20px; background: #eafbea; border-radius: 8px; padding: 15px; border-left: 5px solid #28a745; }
-        .status-title { font-weight: bold; color: #155724; font-size: 1.1em; }
-        .status-desc { color: #155724; margin-top: 5px; font-size: 0.9em; }
+        body { font-family: -apple-system, sans-serif; background-color: #f0f4f7; margin: 0; padding: 10px; }
+        /* 模仿圖片中的 Header */
+        .header { background-color: #27ACB2; color: white; padding: 15px; border-radius: 8px 8px 0 0; font-size: 1.2em; font-weight: bold; }
+        
+        /* 上方最近一次數據卡片 */
+        .latest-card { background: white; padding: 20px; border-radius: 0 0 8px 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 10px; color: #666; font-size: 0.9em; }
+        .concentration-main { text-align: center; margin: 20px 0; }
+        .concentration-value { font-size: 2.2em; font-weight: bold; color: #111; }
+        
+        /* 動力條樣式 */
+        .progress-container { background: #e0e0e0; height: 12px; border-radius: 6px; margin: 15px 0; overflow: hidden; }
+        .progress-bar { background: #28a745; height: 100%; width: 65%; border-radius: 6px; } /* 寬度由 JS 動態決定 */
+        
+        .status-text { color: #28a745; font-weight: bold; margin-bottom: 5px; }
+        .status-desc { font-size: 0.85em; color: #666; line-height: 1.4; }
+
+        /* 下方趨勢圖區域 */
+        .chart-section { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .chart-title { font-size: 1em; color: #333; margin-bottom: 15px; border-left: 4px solid #27ACB2; padding-left: 10px; }
     </style>
 </head>
 <body>
 
-<div class="chart-container">
-    <h3 style="text-align: center; color: #333;">PINP 數據趨勢 ( ng/mL )</h3>
-    <canvas id="bonePowerChart"></canvas>
-</div>
-
-<div class="status-summary">
-    <div class="status-title">目前狀態：良好的藥效反應 (綠色)</div>
-    <div class="status-desc">根據近 3 個月數據，PINP 濃度穩定增加，顯示骨骼正在有效生長。請保持目前的藥物與生活習慣。此報告可作為下次診間回診時的參考數據。</div>
-</div>
-
-<script>
-    const ctx = document.getElementById('bonePowerChart').getContext('2d');
+    <div class="header">PINP 骨骼健康報告</div>
     
-    // 模擬數據 (此處應與後端資料庫串接)
-    const pinpData = [
-        { date: '2024-01', concentration: 35.2 },
-        { date: '2024-02', concentration: 48.1 },
-        { date: '2024-03', concentration: 65.5 }, // 今日檢測
-    ];
+    <div class="latest-card">
+        <div class="data-row"><span>受檢者：</span><span id="p-name">王大明 先生</span></div>
+        <div class="data-row"><span>檢測日期：</span><span id="p-date">2026-03-12</span></div>
+        <hr style="border:0; border-top:1px solid #eee;">
+        
+        <div class="concentration-main">
+            <div style="font-size: 0.8em; color: #8c8c8c;">今日 PINP 濃度</div>
+            <div class="concentration-value"><span id="p-value">65.5</span> ng/mL</div>
+        </div>
 
-    // Chart.js 相關設定
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: pinpData.map(d => d.date),
-            datasets: [{
-                label: 'PINP 濃度',
-                data: pinpData.map(d => d.concentration),
-                borderColor: '#28a745', // 生長區使用綠色
-                backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                borderWidth: 3,
-                pointRadius: 6,
-                pointBackgroundColor: '#28a745',
-                fill: true,
-                tension: 0.3 // 使線條平滑
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    title: { display: true, text: 'ng/mL' },
-                    suggestedMax: 100 // 可根據論文標準調整上限
-                }
+        <div style="font-size: 0.75em; color: #8c8c8c;">骨骼動力條 (藥效反應)</div>
+        <div class="progress-container">
+            <div class="progress-bar" id="p-bar"></div>
+        </div>
+
+        <div class="status-text">● 狀態：生長良好 (綠燈)</div>
+        <div class="status-desc">目前的骨鬆藥物反應良好，顯示骨骼正在積極生長。請維持目前的用藥習慣。</div>
+    </div>
+
+    <div class="chart-section">
+        <div class="chart-title">歷史趨勢分析</div>
+        <canvas id="trendChart"></canvas>
+    </div>
+
+    <script>
+        // 模擬從後端 API 取得的資料
+        const historyData = [
+            { date: '01-10', val: 32 },
+            { date: '02-15', val: 45 },
+            { date: '03-12', val: 65.5 }
+        ];
+
+        // 更新上方卡片數值 (實際開發時應由 API 填入)
+        const latest = historyData[historyData.length - 1];
+        document.getElementById('p-date').innerText = "2026-" + latest.date;
+        document.getElementById('p-value').innerText = latest.val;
+        document.getElementById('p-bar').style.width = latest.val + "%"; // 假設濃度百分比即為動力條長度
+
+        // 繪製下方折線圖
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: historyData.map(d => d.date),
+                datasets: [{
+                    label: 'PINP 濃度',
+                    data: historyData.map(d => d.val),
+                    borderColor: '#27ACB2',
+                    backgroundColor: 'rgba(39, 172, 178, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 5,
+                    pointBackgroundColor: '#27ACB2'
+                }]
             },
-            plugins: {
-                legend: { display: false }, //MVP 階段隱藏圖例以節省空間
-                tooltip: { backgroundColor: 'rgba(0,0,0,0.7)', titleFont: { size: 16 } }
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'ng/mL' } } }
             }
-        }
-    });
-</script>
-
+        });
+    </script>
 </body>
 </html>
