@@ -1,14 +1,16 @@
 import datetime
+import csv
+import io
 import json
 import os
 import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import FastAPI, Request, Depends, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -88,6 +90,13 @@ class GenerateTokensRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=300)
     prefix: str = Field(default="PINP")
     shots_granted: int = Field(default=TOKEN_DEFAULT_SHOTS, ge=1, le=100)
+
+
+class AdminUpdateUserQuotaRequest(BaseModel):
+    admin_key: str
+    user_id: int = Field(ge=1)
+    mode: Literal["set", "add"] = "set"
+    value: int = 0
 
 
 def _ensure_primary_patient(db: Session, user: models.User, fallback_name: str = "使用者") -> models.Patient:
@@ -180,6 +189,18 @@ def _build_new_token_code(prefix: str) -> str:
 def _assert_admin_key(admin_key: str) -> None:
     if not ADMIN_TOKEN_ISSUER_KEY or admin_key != ADMIN_TOKEN_ISSUER_KEY:
         raise HTTPException(status_code=403, detail="admin_key 無效")
+
+
+def _csv_response(filename: str, rows: list[list]) -> Response:
+    sio = io.StringIO()
+    writer = csv.writer(sio)
+    writer.writerows(rows)
+    content = "\ufeff" + sio.getvalue()  # Excel 相容 BOM
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 def send_result_flex(
     reply_token: str,
@@ -604,6 +625,153 @@ async def admin_users(
         "limit": min(max(limit, 1), 500),
         "items": items,
     }
+
+
+@app.post("/api/admin/users/quota/update")
+async def admin_update_user_quota(payload: AdminUpdateUserQuotaRequest, db: Session = Depends(get_db)):
+    """管理端手動調整使用者剩餘拍攝次數。"""
+    _assert_admin_key(payload.admin_key)
+
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    wallet = _ensure_quota_wallet(db, user.id)
+    before = wallet.remaining_shots
+
+    if payload.mode == "set":
+        wallet.remaining_shots = max(int(payload.value), 0)
+    else:  # add
+        wallet.remaining_shots = max(before + int(payload.value), 0)
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "display_name": user.display_name,
+        "patient_name": user.patients[0].name if user.patients else "",
+        "before": before,
+        "after": wallet.remaining_shots,
+        "mode": payload.mode,
+        "value": payload.value,
+    }
+
+
+@app.get("/api/admin/tokens/export.csv")
+async def admin_tokens_csv(
+    admin_key: str,
+    status: str = "all",
+    limit: int = 2000,
+    db: Session = Depends(get_db),
+):
+    """匯出 token 清單 CSV。"""
+    _assert_admin_key(admin_key)
+    status = status.lower().strip()
+    if status not in {"all", "redeemed", "unredeemed"}:
+        raise HTTPException(status_code=400, detail="status 必須為 all / redeemed / unredeemed")
+
+    q = db.query(models.QuotaToken)
+    if status == "redeemed":
+        q = q.filter(models.QuotaToken.redeemed_by_user_id.isnot(None))
+    elif status == "unredeemed":
+        q = q.filter(models.QuotaToken.redeemed_by_user_id.is_(None))
+
+    tokens = (
+        q.order_by(models.QuotaToken.created_at.desc())
+        .limit(min(max(limit, 1), 5000))
+        .all()
+    )
+
+    rows = [[
+        "token_code",
+        "shots_granted",
+        "redeemed",
+        "created_at",
+        "redeemed_at",
+        "redeemed_by_user_id",
+        "redeemed_by_display_name",
+        "redeemed_by_patient_name",
+        "redeemed_by_line_user_id",
+    ]]
+
+    for token in tokens:
+        redeemed_user = None
+        patient_name = ""
+        if token.redeemed_by_user_id:
+            redeemed_user = db.query(models.User).filter(models.User.id == token.redeemed_by_user_id).first()
+            if redeemed_user and redeemed_user.patients:
+                patient_name = redeemed_user.patients[0].name or ""
+
+        rows.append([
+            token.code,
+            token.shots_granted,
+            "yes" if token.redeemed_by_user_id else "no",
+            token.created_at.isoformat() if token.created_at else "",
+            token.redeemed_at.isoformat() if token.redeemed_at else "",
+            token.redeemed_by_user_id or "",
+            redeemed_user.display_name if redeemed_user else "",
+            patient_name,
+            redeemed_user.line_user_id if redeemed_user else "",
+        ])
+
+    return _csv_response("tokens_export.csv", rows)
+
+
+@app.get("/api/admin/users/export.csv")
+async def admin_users_csv(
+    admin_key: str,
+    keyword: str = "",
+    limit: int = 2000,
+    db: Session = Depends(get_db),
+):
+    """匯出使用者額度清單 CSV。"""
+    _assert_admin_key(admin_key)
+
+    users = (
+        db.query(models.User)
+        .order_by(models.User.created_at.desc())
+        .limit(min(max(limit, 1), 5000))
+        .all()
+    )
+
+    kw = keyword.strip().lower()
+    rows = [[
+        "user_id",
+        "display_name",
+        "patient_name",
+        "line_user_id",
+        "remaining_shots",
+        "providers",
+        "created_at",
+    ]]
+
+    for user in users:
+        patient_name = user.patients[0].name if user.patients else ""
+        quota = user.quota.remaining_shots if user.quota else 0
+        providers = ",".join(identity.provider for identity in user.identities)
+
+        search_target = " ".join(
+            [
+                user.display_name or "",
+                user.line_user_id or "",
+                patient_name or "",
+            ]
+        ).lower()
+        if kw and kw not in search_target:
+            continue
+
+        rows.append([
+            user.id,
+            user.display_name or "",
+            patient_name,
+            user.line_user_id or "",
+            quota,
+            providers,
+            user.created_at.isoformat() if user.created_at else "",
+        ])
+
+    return _csv_response("users_export.csv", rows)
 
 
 # ── LINE Webhook ────────────────────────────────────────────────────────────────

@@ -122,6 +122,23 @@
 
     .muted { color: #7a7a7a; font-size: .82rem; }
     textarea { width: 100%; min-height: 90px; resize: vertical; }
+    .adjust-status {
+      min-height: 20px;
+      margin-top: 8px;
+      font-size: .84rem;
+      color: #666;
+    }
+    .adjust-status.error { color: #c62828; }
+    .adjust-status.ok { color: #1a7f3c; }
+    .tiny-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .78rem;
+      background: #4d6472;
+      color: #fff;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -169,6 +186,7 @@
           <option value="unredeemed">未兌換</option>
         </select>
         <button id="reloadTokensBtn" class="secondary">刷新 Token 表</button>
+        <button id="exportTokensCsvBtn" class="warn">匯出 Token CSV</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -188,10 +206,26 @@
     </div>
 
     <div class="panel">
+      <h2>手動調整使用者剩餘拍攝次數</h2>
+      <div class="row">
+        <input id="adjustUserIdInput" type="number" min="1" placeholder="User ID" style="width:120px;" />
+        <select id="adjustModeSelect" style="width:130px;">
+          <option value="set">直接設為</option>
+          <option value="add">增減（可負數）</option>
+        </select>
+        <input id="adjustValueInput" type="number" value="10" placeholder="值" style="width:130px;" />
+        <button id="adjustQuotaBtn" class="warn">套用調整</button>
+      </div>
+      <div class="muted" style="margin-top:8px;">例：User ID 5 + 模式「增減」+ 值 -3，可把剩餘次數扣 3；最低不會小於 0。</div>
+      <div id="adjustQuotaStatus" class="adjust-status"></div>
+    </div>
+
+    <div class="panel">
       <h2>使用者額度清單</h2>
       <div class="row" style="margin-bottom:10px;">
         <input id="userKeyword" type="text" placeholder="搜尋姓名 / 病患姓名 / LINE ID" style="flex:1;min-width:220px;" />
         <button id="reloadUsersBtn" class="secondary">刷新使用者表</button>
+        <button id="exportUsersCsvBtn" class="warn">匯出 Users CSV</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -204,6 +238,7 @@
               <th>登入來源</th>
               <th>LINE ID</th>
               <th>建立時間</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="usersTableBody"></tbody>

@@ -16,10 +16,18 @@ const el = {
 
   tokenStatusFilter: document.getElementById("tokenStatusFilter"),
   reloadTokensBtn: document.getElementById("reloadTokensBtn"),
+  exportTokensCsvBtn: document.getElementById("exportTokensCsvBtn"),
   tokensTableBody: document.getElementById("tokensTableBody"),
+
+  adjustUserIdInput: document.getElementById("adjustUserIdInput"),
+  adjustModeSelect: document.getElementById("adjustModeSelect"),
+  adjustValueInput: document.getElementById("adjustValueInput"),
+  adjustQuotaBtn: document.getElementById("adjustQuotaBtn"),
+  adjustQuotaStatus: document.getElementById("adjustQuotaStatus"),
 
   userKeyword: document.getElementById("userKeyword"),
   reloadUsersBtn: document.getElementById("reloadUsersBtn"),
+  exportUsersCsvBtn: document.getElementById("exportUsersCsvBtn"),
   usersTableBody: document.getElementById("usersTableBody"),
 };
 
@@ -32,6 +40,13 @@ function setStatus(message, type = "") {
   el.globalStatus.className = "status";
   if (type === "error") el.globalStatus.classList.add("error");
   if (type === "ok") el.globalStatus.classList.add("ok");
+}
+
+function setAdjustStatus(message, type = "") {
+  el.adjustQuotaStatus.textContent = message || "";
+  el.adjustQuotaStatus.className = "adjust-status";
+  if (type === "error") el.adjustQuotaStatus.classList.add("error");
+  if (type === "ok") el.adjustQuotaStatus.classList.add("ok");
 }
 
 function escapeHtml(value) {
@@ -130,7 +145,7 @@ function renderTokens(items) {
 
 function renderUsers(items) {
   if (!items.length) {
-    el.usersTableBody.innerHTML = `<tr><td colspan="7" class="muted">查無資料</td></tr>`;
+    el.usersTableBody.innerHTML = `<tr><td colspan="8" class="muted">查無資料</td></tr>`;
     return;
   }
 
@@ -146,10 +161,29 @@ function renderUsers(items) {
           <td>${escapeHtml(providers)}</td>
           <td>${escapeHtml(maskLineId(item.line_user_id))}</td>
           <td>${escapeHtml(formatDate(item.created_at))}</td>
+          <td><button class="tiny-btn fill-user-id-btn" data-user-id="${escapeHtml(item.user_id)}">填入調整</button></td>
         </tr>
       `;
     })
     .join("");
+}
+
+function openCsvExport(path, params = {}) {
+  const key = getAdminKey();
+  if (!key) {
+    setStatus("請先輸入管理金鑰再匯出 CSV。", "error");
+    return;
+  }
+
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("admin_key", key);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") {
+      url.searchParams.set(k, String(v));
+    }
+  });
+
+  window.open(url.toString(), "_blank");
 }
 
 async function loadOverview() {
@@ -225,6 +259,46 @@ async function generateTokens() {
   }
 }
 
+async function adjustUserQuota() {
+  const adminKey = getAdminKey();
+  if (!adminKey) {
+    setStatus("請先輸入管理金鑰。", "error");
+    return;
+  }
+
+  const userId = Number(el.adjustUserIdInput.value || 0);
+  const mode = el.adjustModeSelect.value;
+  const value = Number(el.adjustValueInput.value || 0);
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    setAdjustStatus("請輸入有效 User ID。", "error");
+    return;
+  }
+  if (!Number.isInteger(value)) {
+    setAdjustStatus("調整值必須是整數。", "error");
+    return;
+  }
+
+  try {
+    setAdjustStatus("更新中...");
+    const data = await postJson("/api/admin/users/quota/update", {
+      admin_key: adminKey,
+      user_id: userId,
+      mode,
+      value,
+    });
+
+    setAdjustStatus(
+      `更新成功：User ${data.user_id}（${data.patient_name || data.display_name || "-"}）由 ${data.before} → ${data.after}`,
+      "ok"
+    );
+    await loadOverview();
+    await loadUsers();
+  } catch (e) {
+    setAdjustStatus(`更新失敗：${e.message}`, "error");
+  }
+}
+
 function saveAdminKey() {
   const key = getAdminKey();
   if (!key) {
@@ -245,11 +319,35 @@ function bootstrap() {
   el.saveAdminKeyBtn.addEventListener("click", saveAdminKey);
   el.refreshAllBtn.addEventListener("click", loadAll);
   el.reloadTokensBtn.addEventListener("click", loadTokens);
+  el.exportTokensCsvBtn.addEventListener("click", () => {
+    openCsvExport("/api/admin/tokens/export.csv", {
+      status: el.tokenStatusFilter.value,
+      limit: 5000,
+    });
+  });
+
+  el.adjustQuotaBtn.addEventListener("click", adjustUserQuota);
+
   el.reloadUsersBtn.addEventListener("click", loadUsers);
+  el.exportUsersCsvBtn.addEventListener("click", () => {
+    openCsvExport("/api/admin/users/export.csv", {
+      keyword: el.userKeyword.value.trim(),
+      limit: 5000,
+    });
+  });
+
   el.generateBtn.addEventListener("click", generateTokens);
   el.tokenStatusFilter.addEventListener("change", loadTokens);
   el.userKeyword.addEventListener("keydown", (e) => {
     if (e.key === "Enter") loadUsers();
+  });
+
+  el.usersTableBody.addEventListener("click", (e) => {
+    const btn = e.target.closest(".fill-user-id-btn");
+    if (!btn) return;
+    const userId = btn.getAttribute("data-user-id") || "";
+    el.adjustUserIdInput.value = userId;
+    setAdjustStatus(`已填入 User ID=${userId}，請設定模式與值後套用。`, "ok");
   });
 
   if (saved) {
