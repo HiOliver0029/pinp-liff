@@ -45,6 +45,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 ADMIN_TOKEN_ISSUER_KEY = os.getenv("ADMIN_TOKEN_ISSUER_KEY", "")
 SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "30"))
 TOKEN_DEFAULT_SHOTS = 10
+USE_LINE_WEBHOOK = os.getenv("USE_LINE_WEBHOOK", "true").strip().lower() == "true"
 
 # LINE Bot 設定（金鑰建議透過環境變數注入）
 configuration = Configuration(
@@ -778,6 +779,13 @@ async def admin_users_csv(
 
 @app.post("/callback")
 async def callback(request: Request):
+    if not USE_LINE_WEBHOOK:
+        return {
+            "status": "ok",
+            "mode": "line-biz",
+            "message": "Webhook handling is disabled by USE_LINE_WEBHOOK=false",
+        }
+
     signature = request.headers.get("X-Line-Signature")
     body = await request.body()
     try:
@@ -884,23 +892,10 @@ def handle_text(event):
             )
             return
 
-        # ── 一般文字：顯示使用說明 ──
-        user = db.query(models.User).filter(
-            models.User.line_user_id == line_user_id
-        ).first()
-        name = (
-            user.patients[0].name
-            if user and user.patients
-            else "尚未設定"
-        )
-        _reply_text(
-            event.reply_token,
-            f"🦴 Epoch PINP 骨骼健康監測系統\n"
-            f"目前受檢者：{name}\n\n"
-            "📷 傳送試紙照片 → 自動 AI 判讀並產生報告\n"
-            "📊 查看歷史趨勢 → 點選選單「歷史數據」\n"
-            "✏️ 修改受檢者姓名 → 輸入「重設姓名」",
-        )
+        # ── 一般文字：不做預設回覆 ──
+        # 目的：保留 LINE Biz 後台設定的關鍵字回覆，不由 webhook 蓋掉。
+        # 仍保留 webhook 指令：重設姓名 / 改名 / 設定姓名，以及 onboarding 姓名輸入流程。
+        return
     except Exception as e:
         print(f"handle_text 錯誤: {e}")
         db.rollback()
