@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>PINP 骨骼檢測</title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -73,6 +75,91 @@
             box-shadow: 0 1px 4px rgba(0,0,0,.08);
         }
         .checklist li span { font-size: 1.5rem; margin-right: 12px; }
+
+        /* 登入資訊卡 */
+        .auth-box {
+            background: #fff;
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: 0 1px 6px rgba(0,0,0,.08);
+            margin-bottom: 14px;
+        }
+        .auth-title { font-size: .95rem; font-weight: bold; color: #1f1f1f; margin-bottom: 6px; }
+        .auth-meta { font-size: .84rem; color: #666; line-height: 1.5; }
+        .auth-ok { color: #1a7f3c; font-weight: bold; }
+        .auth-warn { color: #b56b00; font-weight: bold; }
+        .mini-btn {
+            border: none;
+            border-radius: 10px;
+            background: #1a7f3c;
+            color: #fff;
+            font-size: .88rem;
+            font-weight: bold;
+            padding: 10px 12px;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        /* 額度兌換卡 */
+        .quota-box {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 1px 6px rgba(0,0,0,.08);
+            padding: 14px;
+            margin-top: 10px;
+        }
+        .quota-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .quota-badge {
+            background: #edf8ee;
+            color: #1a7f3c;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: .8rem;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .quota-input {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 11px 12px;
+            font-size: .92rem;
+            margin-top: 8px;
+            outline: none;
+        }
+        .quota-input:focus {
+            border-color: #1a7f3c;
+            box-shadow: 0 0 0 3px rgba(26,127,60,.14);
+        }
+        .quota-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .quota-actions button {
+            flex: 1;
+            border: none;
+            border-radius: 10px;
+            padding: 11px;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .quota-actions .redeem-btn { background: #1a7f3c; }
+        .quota-actions .scan-btn { background: #3d5afe; }
+        .quota-msg {
+            margin-top: 8px;
+            font-size: .82rem;
+            color: #666;
+            min-height: 20px;
+        }
 
         /* 倒數計時器 */
         .timer-box {
@@ -244,6 +331,16 @@
 
     <!-- Step 1：準備耗材 -->
     <div class="panel active" id="step1">
+        <div class="auth-box">
+            <div class="auth-title">登入綁定</div>
+            <div class="auth-meta" id="authStatusText">🔐 尚未登入，請使用 LINE 或 Google 登入。</div>
+            <div class="auth-meta" style="margin-top:4px;">受檢者：<span id="authPatientName">—</span></div>
+            <div class="auth-meta" style="margin-top:2px;">剩餘拍攝次數：<span id="authShots" class="auth-warn">0</span></div>
+
+            <button class="mini-btn" id="lineLoginBtn" onclick="manualLineLogin()">使用 LINE 登入</button>
+            <div id="googleLoginWrap" style="margin-top:10px;"></div>
+        </div>
+
         <h2 style="font-size:1rem;color:#333;margin-bottom:4px;">請確認以下耗材備齊</h2>
         <p style="font-size:0.85rem;color:#888;margin-bottom:4px;">缺少任一項目，請先備妥再繼續。</p>
         <ul class="checklist">
@@ -280,6 +377,23 @@
     <div class="panel" id="step3">
         <h2 style="font-size:1rem;color:#333;margin-bottom:4px;">對準試紙拍照</h2>
         <p style="font-size:0.85rem;color:#888;">將試紙水平放置，對準框內再按下拍照。</p>
+
+        <div class="quota-box">
+            <div class="quota-row">
+                <div style="font-size:.9rem;color:#333;font-weight:bold;">拍攝額度驗證</div>
+                <div class="quota-badge" id="quotaBadge">剩餘 0 次</div>
+            </div>
+            <div style="font-size:.82rem;color:#666;line-height:1.4;">
+                每組 Token / QR Code 可兌換 10 次拍攝資格，兌換後可立即使用。
+            </div>
+            <input id="tokenInput" class="quota-input" placeholder="輸入試紙包 Token（例：PINP-AB12-CD34）" />
+            <div class="quota-actions">
+                <button class="redeem-btn" id="redeemTokenBtn" onclick="redeemTokenFromInput()">兌換 Token</button>
+                <button class="scan-btn" id="scanQrBtn" onclick="triggerQrScan()">掃描 QR 兌換</button>
+            </div>
+            <div class="quota-msg" id="quotaMsg">請先登入並兌換額度後再拍照。</div>
+        </div>
+
         <div class="guide-area">
             <div class="guide-box">
                 <div class="guide-lines">
@@ -302,9 +416,11 @@
         <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
         <!-- 相尊上傳：不帶 capture 屬性，允許選擇相簿中的照片 -->
         <input type="file" id="galleryInput" accept="image/*" style="display:none">
+        <!-- QR 掃描：使用相機拍 QR 後解碼 -->
+        <input type="file" id="qrInput" accept="image/*" capture="environment" style="display:none">
         <div style="display:flex;gap:10px;margin-top:16px;">
-            <button class="btn" style="flex:1;" onclick="triggerCamera()">📷 相機拍照</button>
-            <button class="btn secondary" style="flex:1;" onclick="triggerGallery()">🖼️ 相簿上傳</button>
+            <button class="btn" id="captureBtn" style="flex:1;" onclick="triggerCamera()">📷 相機拍照</button>
+            <button class="btn secondary" id="galleryBtn" style="flex:1;" onclick="triggerGallery()">🖼️ 相簿上傳</button>
         </div>
     </div>
 

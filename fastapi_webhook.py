@@ -1,9 +1,16 @@
 import datetime
+import json
 import os
+import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Optional
 
 from fastapi import FastAPI, Request, Depends, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -32,6 +39,10 @@ TRENDS_LIFF_URL = os.getenv(
     "TRENDS_LIFF_URL",
     "https://liff.line.me/YOUR_TRENDS_LIFF_ID",
 )
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+ADMIN_TOKEN_ISSUER_KEY = os.getenv("ADMIN_TOKEN_ISSUER_KEY", "")
+SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "30"))
+TOKEN_DEFAULT_SHOTS = 10
 
 # LINE Bot 設定（金鑰建議透過環境變數注入）
 configuration = Configuration(
@@ -56,6 +67,114 @@ def get_db():
 
 
 # ── 輔助函式 ────────────────────────────────────────────────────────────────────
+
+class LineAuthRequest(BaseModel):
+    line_user_id: str
+    display_name: Optional[str] = ""
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+    line_user_id: Optional[str] = None
+
+
+class RedeemTokenRequest(BaseModel):
+    session_token: str
+    token_code: str
+
+
+class GenerateTokensRequest(BaseModel):
+    admin_key: str
+    count: int = Field(default=1, ge=1, le=300)
+    prefix: str = Field(default="PINP")
+    shots_granted: int = Field(default=TOKEN_DEFAULT_SHOTS, ge=1, le=100)
+
+
+def _ensure_primary_patient(db: Session, user: models.User, fallback_name: str = "使用者") -> models.Patient:
+    if user.patients:
+        patient = user.patients[0]
+        if not patient.name:
+            patient.name = fallback_name
+        return patient
+
+    patient = models.Patient(
+        name=fallback_name,
+        age=0,
+        medication="",
+        caregiver_id=user.id,
+    )
+    db.add(patient)
+    db.flush()
+    return patient
+
+
+def _ensure_quota_wallet(db: Session, user_id: int) -> models.UserQuota:
+    wallet = db.query(models.UserQuota).filter(models.UserQuota.user_id == user_id).first()
+    if wallet:
+        return wallet
+
+    wallet = models.UserQuota(user_id=user_id, remaining_shots=0)
+    db.add(wallet)
+    db.flush()
+    return wallet
+
+
+def _create_auth_session(db: Session, user_id: int, provider: str) -> models.AuthSession:
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=SESSION_EXPIRE_DAYS)
+    session = models.AuthSession(
+        user_id=user_id,
+        provider=provider,
+        token=secrets.token_urlsafe(32),
+        expires_at=expires_at,
+    )
+    db.add(session)
+    db.flush()
+    return session
+
+
+def _get_session(db: Session, session_token: str) -> models.AuthSession:
+    session = db.query(models.AuthSession).filter(models.AuthSession.token == session_token).first()
+    if not session:
+        raise HTTPException(status_code=401, detail="登入憑證無效，請重新登入")
+    if session.expires_at < datetime.datetime.utcnow():
+        raise HTTPException(status_code=401, detail="登入已過期，請重新登入")
+    return session
+
+
+def _verify_google_id_token(id_token: str) -> dict:
+    query = urllib.parse.urlencode({"id_token": id_token})
+    url = f"https://oauth2.googleapis.com/tokeninfo?{query}"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=401, detail="Google Token 驗證失敗") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=503, detail="目前無法連線 Google 驗證服務") from exc
+
+    issuer = payload.get("iss")
+    if issuer not in ("accounts.google.com", "https://accounts.google.com"):
+        raise HTTPException(status_code=401, detail="Google Token 發行者不正確")
+
+    if GOOGLE_CLIENT_ID and payload.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Google Client ID 不匹配")
+
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail="Google Token 內容不完整")
+    return payload
+
+
+def _normalize_token_code(token_code: str) -> str:
+    cleaned = token_code.strip().upper().replace(" ", "")
+    return cleaned
+
+
+def _build_new_token_code(prefix: str) -> str:
+    p = "".join(ch for ch in prefix.upper() if ch.isalnum()) or "PINP"
+    left = secrets.token_hex(2).upper()
+    right = secrets.token_hex(2).upper()
+    return f"{p}-{left}-{right}"
 
 def send_result_flex(
     reply_token: str,
@@ -131,6 +250,214 @@ def _reply_text(reply_token: str, text: str) -> None:
         )
 
 
+@app.get("/api/config/public")
+async def get_public_config():
+    """提供前端所需公開設定。"""
+    return {
+        "google_client_id": GOOGLE_CLIENT_ID,
+    }
+
+
+@app.post("/api/auth/line")
+async def auth_line(payload: LineAuthRequest, db: Session = Depends(get_db)):
+    """
+    使用 LINE userId 建立 / 取得帳號，回傳 session token。
+    LIFF 進入時可直接完成登入綁定。
+    """
+    line_user_id = payload.line_user_id.strip()
+    if not line_user_id:
+        raise HTTPException(status_code=400, detail="line_user_id 不可為空")
+
+    user = db.query(models.User).filter(models.User.line_user_id == line_user_id).first()
+    if not user:
+        user = models.User(
+            line_user_id=line_user_id,
+            display_name=(payload.display_name or ""),
+        )
+        db.add(user)
+        db.flush()
+    elif payload.display_name:
+        user.display_name = payload.display_name
+
+    identity = (
+        db.query(models.ExternalIdentity)
+        .filter(
+            models.ExternalIdentity.provider == "line",
+            models.ExternalIdentity.provider_user_id == line_user_id,
+        )
+        .first()
+    )
+    if not identity:
+        db.add(
+            models.ExternalIdentity(
+                user_id=user.id,
+                provider="line",
+                provider_user_id=line_user_id,
+            )
+        )
+
+    patient = _ensure_primary_patient(db, user, fallback_name=user.display_name or "使用者")
+    wallet = _ensure_quota_wallet(db, user.id)
+    session = _create_auth_session(db, user.id, provider="line")
+    db.commit()
+
+    return {
+        "session_token": session.token,
+        "provider": "line",
+        "display_name": user.display_name,
+        "patient_name": patient.name,
+        "remaining_shots": wallet.remaining_shots,
+    }
+
+
+@app.post("/api/auth/google")
+async def auth_google(payload: GoogleAuthRequest, db: Session = Depends(get_db)):
+    """
+    使用 Google ID Token 登入。
+    若帶入 line_user_id，會嘗試綁定到同一位 User。
+    """
+    token_claims = _verify_google_id_token(payload.id_token)
+    google_sub = token_claims.get("sub")
+    email = token_claims.get("email")
+    name = token_claims.get("name") or email or "Google 使用者"
+
+    identity = (
+        db.query(models.ExternalIdentity)
+        .filter(
+            models.ExternalIdentity.provider == "google",
+            models.ExternalIdentity.provider_user_id == google_sub,
+        )
+        .first()
+    )
+
+    if identity:
+        user = db.query(models.User).filter(models.User.id == identity.user_id).first()
+        if not user:
+            user = models.User(line_user_id=payload.line_user_id, display_name=name)
+            db.add(user)
+            db.flush()
+            identity.user_id = user.id
+    else:
+        user = None
+        if payload.line_user_id:
+            user = db.query(models.User).filter(
+                models.User.line_user_id == payload.line_user_id
+            ).first()
+
+        if not user:
+            user = models.User(line_user_id=payload.line_user_id, display_name=name)
+            db.add(user)
+            db.flush()
+        elif not user.display_name:
+            user.display_name = name
+
+        db.add(
+            models.ExternalIdentity(
+                user_id=user.id,
+                provider="google",
+                provider_user_id=google_sub,
+                email=email,
+            )
+        )
+
+    patient = _ensure_primary_patient(db, user, fallback_name=user.display_name or "使用者")
+    wallet = _ensure_quota_wallet(db, user.id)
+    session = _create_auth_session(db, user.id, provider="google")
+    db.commit()
+
+    return {
+        "session_token": session.token,
+        "provider": "google",
+        "display_name": user.display_name,
+        "patient_name": patient.name,
+        "remaining_shots": wallet.remaining_shots,
+    }
+
+
+@app.get("/api/quota/status")
+async def quota_status(session_token: str, db: Session = Depends(get_db)):
+    session = _get_session(db, session_token)
+    user = db.query(models.User).filter(models.User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    patient = _ensure_primary_patient(db, user, fallback_name=user.display_name or "使用者")
+    wallet = _ensure_quota_wallet(db, user.id)
+    db.commit()
+
+    return {
+        "provider": session.provider,
+        "display_name": user.display_name,
+        "patient_name": patient.name,
+        "remaining_shots": wallet.remaining_shots,
+    }
+
+
+@app.post("/api/quota/redeem")
+async def redeem_quota_token(payload: RedeemTokenRequest, db: Session = Depends(get_db)):
+    session = _get_session(db, payload.session_token)
+    user = db.query(models.User).filter(models.User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    code = _normalize_token_code(payload.token_code)
+    if len(code) < 6:
+        raise HTTPException(status_code=400, detail="Token 格式不正確")
+
+    token = db.query(models.QuotaToken).filter(models.QuotaToken.code == code).first()
+    if not token:
+        raise HTTPException(status_code=404, detail="查無此 Token，請確認輸入")
+
+    if token.redeemed_by_user_id:
+        if token.redeemed_by_user_id == user.id:
+            raise HTTPException(status_code=409, detail="此 Token 已被您兌換過")
+        raise HTTPException(status_code=409, detail="此 Token 已被其他帳號使用")
+
+    wallet = _ensure_quota_wallet(db, user.id)
+    wallet.remaining_shots += token.shots_granted
+    token.redeemed_by_user_id = user.id
+    token.redeemed_at = datetime.datetime.utcnow()
+    db.commit()
+
+    return {
+        "ok": True,
+        "token_code": token.code,
+        "granted_shots": token.shots_granted,
+        "remaining_shots": wallet.remaining_shots,
+    }
+
+
+@app.post("/api/admin/quota/generate")
+async def generate_quota_tokens(payload: GenerateTokensRequest, db: Session = Depends(get_db)):
+    """
+    產生可印在試紙包上的 token（可再轉為 QR code 內容）。
+    需提供 ADMIN_TOKEN_ISSUER_KEY。
+    """
+    if not ADMIN_TOKEN_ISSUER_KEY or payload.admin_key != ADMIN_TOKEN_ISSUER_KEY:
+        raise HTTPException(status_code=403, detail="admin_key 無效")
+
+    codes = []
+    for _ in range(payload.count):
+        code = _build_new_token_code(payload.prefix)
+        while db.query(models.QuotaToken).filter(models.QuotaToken.code == code).first():
+            code = _build_new_token_code(payload.prefix)
+
+        db.add(
+            models.QuotaToken(
+                code=code,
+                shots_granted=payload.shots_granted,
+            )
+        )
+        codes.append(code)
+
+    db.commit()
+    return {
+        "count": len(codes),
+        "shots_per_token": payload.shots_granted,
+        "codes": codes,
+    }
+
+
 # ── LINE Webhook ────────────────────────────────────────────────────────────────
 
 @app.post("/callback")
@@ -159,7 +486,26 @@ def handle_follow(event):
         if not user:
             user = models.User(line_user_id=line_user_id, display_name="")
             db.add(user)
-            db.commit()
+
+        identity = (
+            db.query(models.ExternalIdentity)
+            .filter(
+                models.ExternalIdentity.provider == "line",
+                models.ExternalIdentity.provider_user_id == line_user_id,
+            )
+            .first()
+        )
+        if not identity:
+            db.flush()
+            db.add(
+                models.ExternalIdentity(
+                    user_id=user.id,
+                    provider="line",
+                    provider_user_id=line_user_id,
+                )
+            )
+
+        db.commit()
         # 標記為等待輸入姓名
         _pending_name[line_user_id] = True
         _reply_text(
@@ -325,6 +671,7 @@ _STATUS_DESCRIPTIONS = {
 @app.post("/api/upload")
 async def upload_image(
     file: UploadFile = File(...),
+    session_token: str = Form(default=None),
     line_user_id: str = Form(default=None),
     device_info: str = Form(default=None),
     db: Session = Depends(get_db),
@@ -332,10 +679,38 @@ async def upload_image(
     """
     LIFF 直接上傳試紙照片的端點。
     1. AI 影像判讀（白平衡 → C 線驗證 → T/C 比值換算）
-    2. 儲存檢測紀錄至資料庫（若有 line_user_id）
+    2. 驗證帳號與拍攝額度（session token）
+    3. 儲存檢測紀錄至資料庫
     3. 透過 LINE Push API 主動推播 Flex Message 給使用者
     4. 回傳 JSON 供 LIFF 頁面即時顯示結果
     """
+    user = None
+    wallet = None
+
+    if session_token:
+        auth_session = _get_session(db, session_token)
+        user = db.query(models.User).filter(models.User.id == auth_session.user_id).first()
+    elif line_user_id:
+        user = db.query(models.User).filter(models.User.line_user_id == line_user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="請先登入 LINE 或 Google 帳號")
+
+    patient = _ensure_primary_patient(db, user, fallback_name=user.display_name or "使用者")
+
+    # session token 登入模式：強制檢查拍攝額度
+    if session_token:
+        wallet = _ensure_quota_wallet(db, user.id)
+        if wallet.remaining_shots <= 0:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "message": "拍攝額度不足，請先輸入 token 或掃描 QR code 兌換 10 次拍攝資格。",
+                    "remaining_shots": 0,
+                },
+            )
+        wallet.remaining_shots -= 1
+
     image_bytes = await file.read()
 
     # 儲存影像
@@ -348,56 +723,46 @@ async def upload_image(
     result = processor.analyze_pinp_strip(image_path, image_bytes)
 
     if not result.get("c_valid", True):
+        db.commit()
         return JSONResponse(
             status_code=422,
-            content={"message": "C 線無效，請確認血清量是否足夠，並重新操作後再拍攝。"},
+            content={
+                "message": "C 線無效，請確認血清量是否足夠，並重新操作後再拍攝。",
+                "remaining_shots": wallet.remaining_shots if wallet else None,
+            },
         )
 
     status_color = processor.determine_status(result["concentration"])
-    patient_name = "使用者"
 
-    # 儲存至資料庫 + 推播 Flex Message
-    if line_user_id:
-        user = db.query(models.User).filter(
-            models.User.line_user_id == line_user_id
-        ).first()
-        if not user:
-            user = models.User(line_user_id=line_user_id, display_name="")
-            db.add(user)
-            db.flush()
+    record = models.DetectionRecord(
+        patient_id=patient.id,
+        concentration=result["concentration"],
+        gray_value=result["gray_value"],
+        status_color=status_color,
+        image_path=image_path,
+        device_info=device_info,
+        detected_at=datetime.datetime.utcnow(),
+    )
+    db.add(record)
+    db.commit()
 
-        if not user.patients:
-            patient = models.Patient(
-                name="使用者", age=0, medication="", caregiver_id=user.id
-            )
-            db.add(patient)
-            db.flush()
-
-        patient_name = user.patients[0].name or "使用者"
-
-        record = models.DetectionRecord(
-            patient_id=user.patients[0].id,
-            concentration=result["concentration"],
-            gray_value=result["gray_value"],
-            status_color=status_color,
-            image_path=image_path,
-            device_info=device_info,
-            detected_at=datetime.datetime.utcnow(),
-        )
-        db.add(record)
-        db.commit()
-
-        # 推播 Flex Message 到 LINE 聊天室
+    # 若使用者有綁定 LINE，推播 Flex Message 到聊天室
+    if user.line_user_id:
         try:
-            push_result_flex(line_user_id, result["concentration"], status_color, patient_name)
+            push_result_flex(
+                user.line_user_id,
+                result["concentration"],
+                status_color,
+                patient_name=patient.name or "使用者",
+            )
         except Exception as push_err:
-            # Push 失敗不影響 LIFF 結果顯示
             print(f"[WARN] push_result_flex 失敗: {push_err}")
 
     return {
         "concentration": result["concentration"],
         "status_color": status_color,
         "description": _STATUS_DESCRIPTIONS.get(status_color, ""),
+        "remaining_shots": wallet.remaining_shots if wallet else None,
     }
 
 @app.get("/api/history/{line_user_id}")

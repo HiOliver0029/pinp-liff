@@ -1,4 +1,13 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey, Text
+from sqlalchemy import (
+    Column,
+    Integer,
+    Float,
+    String,
+    DateTime,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -16,6 +25,9 @@ class User(Base):
 
     # 一個照顧者可以管理多位長輩 (如父親、母親)
     patients = relationship("Patient", back_populates="caregiver")
+    identities = relationship("ExternalIdentity", back_populates="user")
+    sessions = relationship("AuthSession", back_populates="user")
+    quota = relationship("UserQuota", back_populates="user", uselist=False)
 
 class Patient(Base):
     """
@@ -56,3 +68,80 @@ class DetectionRecord(Base):
     doctor_notes = Column(Text, nullable=True) 
 
     patient = relationship("Patient", back_populates="records")
+
+
+class ExternalIdentity(Base):
+    """
+    外部登入身份綁定（LINE / Google）
+    同一個使用者可綁定多個 provider。
+    """
+
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_user_id", name="uq_provider_identity"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)  # line / google
+    provider_user_id = Column(String, nullable=False, index=True)
+    email = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="identities")
+
+
+class AuthSession(Base):
+    """
+    前端登入後使用的 session token。
+    供 LIFF 網頁呼叫 API 時綁定使用者身份。
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False)  # line / google
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="sessions")
+
+
+class UserQuota(Base):
+    """
+    使用者拍攝額度錢包。
+    redeem token / qr code 後累加可拍攝次數。
+    """
+
+    __tablename__ = "user_quotas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    remaining_shots = Column(Integer, default=0, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+    )
+
+    user = relationship("User", back_populates="quota")
+
+
+class QuotaToken(Base):
+    """
+    試紙包 token / QR code 對應資料。
+    每個 token 只能兌換一次，預設給 10 次拍攝額度。
+    """
+
+    __tablename__ = "quota_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, nullable=False, index=True)
+    shots_granted = Column(Integer, default=10, nullable=False)
+    redeemed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    redeemed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    redeemed_by = relationship("User")
