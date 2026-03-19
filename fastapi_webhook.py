@@ -176,6 +176,11 @@ def _build_new_token_code(prefix: str) -> str:
     right = secrets.token_hex(2).upper()
     return f"{p}-{left}-{right}"
 
+
+def _assert_admin_key(admin_key: str) -> None:
+    if not ADMIN_TOKEN_ISSUER_KEY or admin_key != ADMIN_TOKEN_ISSUER_KEY:
+        raise HTTPException(status_code=403, detail="admin_key 無效")
+
 def send_result_flex(
     reply_token: str,
     concentration: float,
@@ -433,8 +438,7 @@ async def generate_quota_tokens(payload: GenerateTokensRequest, db: Session = De
     產生可印在試紙包上的 token（可再轉為 QR code 內容）。
     需提供 ADMIN_TOKEN_ISSUER_KEY。
     """
-    if not ADMIN_TOKEN_ISSUER_KEY or payload.admin_key != ADMIN_TOKEN_ISSUER_KEY:
-        raise HTTPException(status_code=403, detail="admin_key 無效")
+    _assert_admin_key(payload.admin_key)
 
     codes = []
     for _ in range(payload.count):
@@ -455,6 +459,150 @@ async def generate_quota_tokens(payload: GenerateTokensRequest, db: Session = De
         "count": len(codes),
         "shots_per_token": payload.shots_granted,
         "codes": codes,
+    }
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(admin_key: str, db: Session = Depends(get_db)):
+    """管理頁總覽：token 發放與使用者額度概況。"""
+    _assert_admin_key(admin_key)
+
+    total_tokens = db.query(models.QuotaToken).count()
+    redeemed_tokens = (
+        db.query(models.QuotaToken)
+        .filter(models.QuotaToken.redeemed_by_user_id.isnot(None))
+        .count()
+    )
+    total_users = db.query(models.User).count()
+    quota_wallets = db.query(models.UserQuota).all()
+    users_with_quota = len([q for q in quota_wallets if q.remaining_shots > 0])
+    total_remaining_shots = sum(q.remaining_shots for q in quota_wallets)
+
+    return {
+        "total_tokens": total_tokens,
+        "redeemed_tokens": redeemed_tokens,
+        "unredeemed_tokens": max(total_tokens - redeemed_tokens, 0),
+        "total_users": total_users,
+        "users_with_quota": users_with_quota,
+        "total_remaining_shots": total_remaining_shots,
+    }
+
+
+@app.get("/api/admin/tokens")
+async def admin_tokens(
+    admin_key: str,
+    status: str = "all",
+    limit: int = 200,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """
+    管理頁 token 清單。
+    status: all | redeemed | unredeemed
+    """
+    _assert_admin_key(admin_key)
+    status = status.lower().strip()
+    if status not in {"all", "redeemed", "unredeemed"}:
+        raise HTTPException(status_code=400, detail="status 必須為 all / redeemed / unredeemed")
+
+    q = db.query(models.QuotaToken)
+    if status == "redeemed":
+        q = q.filter(models.QuotaToken.redeemed_by_user_id.isnot(None))
+    elif status == "unredeemed":
+        q = q.filter(models.QuotaToken.redeemed_by_user_id.is_(None))
+
+    tokens = (
+        q.order_by(models.QuotaToken.created_at.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 500))
+        .all()
+    )
+
+    items = []
+    for token in tokens:
+        redeemed_user = None
+        patient_name = ""
+        if token.redeemed_by_user_id:
+            redeemed_user = db.query(models.User).filter(models.User.id == token.redeemed_by_user_id).first()
+            if redeemed_user and redeemed_user.patients:
+                patient_name = redeemed_user.patients[0].name or ""
+
+        items.append(
+            {
+                "code": token.code,
+                "shots_granted": token.shots_granted,
+                "created_at": token.created_at.isoformat() if token.created_at else None,
+                "redeemed": token.redeemed_by_user_id is not None,
+                "redeemed_at": token.redeemed_at.isoformat() if token.redeemed_at else None,
+                "redeemed_by_user_id": token.redeemed_by_user_id,
+                "redeemed_by_display_name": redeemed_user.display_name if redeemed_user else "",
+                "redeemed_by_patient_name": patient_name,
+                "redeemed_by_line_user_id": redeemed_user.line_user_id if redeemed_user else "",
+            }
+        )
+
+    return {
+        "status": status,
+        "count": len(items),
+        "offset": max(offset, 0),
+        "limit": min(max(limit, 1), 500),
+        "items": items,
+    }
+
+
+@app.get("/api/admin/users")
+async def admin_users(
+    admin_key: str,
+    keyword: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """管理頁使用者清單：剩餘拍攝次數、病患姓名、綁定 provider。"""
+    _assert_admin_key(admin_key)
+
+    users = (
+        db.query(models.User)
+        .order_by(models.User.created_at.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 500))
+        .all()
+    )
+
+    kw = keyword.strip().lower()
+    items = []
+    for user in users:
+        patient_name = user.patients[0].name if user.patients else ""
+        quota = user.quota.remaining_shots if user.quota else 0
+        providers = [identity.provider for identity in user.identities]
+
+        search_target = " ".join(
+            [
+                user.display_name or "",
+                user.line_user_id or "",
+                patient_name or "",
+            ]
+        ).lower()
+        if kw and kw not in search_target:
+            continue
+
+        items.append(
+            {
+                "user_id": user.id,
+                "display_name": user.display_name,
+                "line_user_id": user.line_user_id,
+                "patient_name": patient_name,
+                "remaining_shots": quota,
+                "providers": providers,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }
+        )
+
+    return {
+        "count": len(items),
+        "offset": max(offset, 0),
+        "limit": min(max(limit, 1), 500),
+        "items": items,
     }
 
 

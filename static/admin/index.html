@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Epoch 管理後台</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #f4f7f6;
+      color: #222;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 14px 40px;
+    }
+    .header {
+      background: #1a7f3c;
+      color: #fff;
+      padding: 18px;
+      border-radius: 12px;
+      margin-bottom: 14px;
+    }
+    .header h1 { margin: 0 0 6px; font-size: 1.2rem; }
+    .header p { margin: 0; font-size: .9rem; opacity: .92; }
+
+    .panel {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .panel h2 {
+      font-size: 1rem;
+      margin: 0 0 10px;
+      color: #2f2f2f;
+    }
+
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row > * { min-width: 0; }
+
+    input, select, button, textarea {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid #d8d8d8;
+      padding: 10px 12px;
+    }
+    input, select, textarea { background: #fff; }
+    button {
+      border: none;
+      cursor: pointer;
+      color: #fff;
+      background: #1a7f3c;
+      font-weight: 600;
+    }
+    button.secondary { background: #4d6472; }
+    button.warn { background: #0d47a1; }
+
+    .status {
+      min-height: 20px;
+      margin-top: 8px;
+      font-size: .85rem;
+      color: #666;
+    }
+    .status.error { color: #c62828; }
+    .status.ok { color: #1a7f3c; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fafcfa;
+    }
+    .card .k { font-size: .8rem; color: #687076; }
+    .card .v { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid #ececec;
+      border-radius: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      background: #fff;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: .85rem;
+      vertical-align: top;
+    }
+    th {
+      background: #f8faf8;
+      color: #4f5a52;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 600;
+      background: #f0f2f5;
+      color: #4f5a52;
+    }
+    .pill.ok { background: #e8f5e9; color: #1b5e20; }
+    .pill.no { background: #fff3e0; color: #b26a00; }
+
+    .muted { color: #7a7a7a; font-size: .82rem; }
+    textarea { width: 100%; min-height: 90px; resize: vertical; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1>Epoch Token / 額度管理後台</h1>
+      <p>查看 token 兌換狀態、誰已兌換、以及每位使用者剩餘拍攝次數。</p>
+    </div>
+
+    <div class="panel">
+      <h2>管理員驗證</h2>
+      <div class="row">
+        <input id="adminKeyInput" type="password" placeholder="請輸入 ADMIN_TOKEN_ISSUER_KEY" style="flex:1;min-width:260px;" />
+        <button id="saveAdminKeyBtn">儲存金鑰</button>
+        <button id="refreshAllBtn" class="secondary">重新整理</button>
+      </div>
+      <div id="globalStatus" class="status">請先輸入管理金鑰後再查詢。</div>
+    </div>
+
+    <div class="panel">
+      <h2>總覽</h2>
+      <div class="cards" id="overviewCards">
+        <div class="card"><div class="k">總 Token</div><div class="v">-</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>產生新 Token（可印在包裝 / QR）</h2>
+      <div class="row">
+        <input id="genCount" type="number" min="1" max="300" value="10" style="width:120px;" />
+        <input id="genPrefix" type="text" value="PINP" style="width:120px;" />
+        <input id="genShots" type="number" min="1" max="100" value="10" style="width:140px;" />
+        <button id="generateBtn" class="warn">產生 Token</button>
+      </div>
+      <div class="muted" style="margin:8px 0;">欄位順序：數量 / 前綴 / 每組給幾次拍攝機會</div>
+      <textarea id="generatedCodes" placeholder="產生結果會顯示在這裡"></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Token 清單</h2>
+      <div class="row" style="margin-bottom:10px;">
+        <select id="tokenStatusFilter" style="width:170px;">
+          <option value="all">全部</option>
+          <option value="redeemed">已兌換</option>
+          <option value="unredeemed">未兌換</option>
+        </select>
+        <button id="reloadTokensBtn" class="secondary">刷新 Token 表</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th>次數</th>
+              <th>狀態</th>
+              <th>兌換者</th>
+              <th>LINE ID</th>
+              <th>兌換時間</th>
+            </tr>
+          </thead>
+          <tbody id="tokensTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>使用者額度清單</h2>
+      <div class="row" style="margin-bottom:10px;">
+        <input id="userKeyword" type="text" placeholder="搜尋姓名 / 病患姓名 / LINE ID" style="flex:1;min-width:220px;" />
+        <button id="reloadUsersBtn" class="secondary">刷新使用者表</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User ID</th>
+              <th>顯示名稱</th>
+              <th>受檢者姓名</th>
+              <th>剩餘拍攝次數</th>
+              <th>登入來源</th>
+              <th>LINE ID</th>
+              <th>建立時間</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
