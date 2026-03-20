@@ -1,6 +1,6 @@
 /* ── 初始化與全域狀態 ───────────────────────────────────────── */
 
-const LIFF_ID = "YOUR_LIFF_ID";
+let LIFF_ID = "";
 const REACT_SECONDS = 15 * 60;
 const SESSION_STORAGE_KEY = "epoch_session_token";
 
@@ -14,6 +14,8 @@ let currentDisplayName = "";
 let currentPatientName = "";
 let remainingShots = 0;
 let googleClientId = "";
+let demoAllowGuestUpload = false;
+let demoSkipTokenCheck = false;
 
 /* ── 共用 UI Helpers ───────────────────────────────────────── */
 
@@ -38,12 +40,16 @@ function updateAuthUI() {
 
     const isLoggedIn = Boolean(authSessionToken);
     const hasShots = remainingShots > 0;
+    const canShootWithoutLogin = demoAllowGuestUpload;
+    const canShootWithoutToken = demoSkipTokenCheck;
 
     if (statusEl) {
         if (isLoggedIn) {
             const providerText = authProvider === "google" ? "Google" : "LINE";
             const name = currentDisplayName || "使用者";
             statusEl.innerHTML = `<span class="auth-ok">✅ 已登入（${providerText}）</span>｜${name}`;
+        } else if (canShootWithoutLogin) {
+            statusEl.innerHTML = `<span class="auth-ok">🧪 Demo 模式</span>｜未登入也可直接使用拍照分析。`;
         } else {
             statusEl.innerHTML = `<span class="auth-warn">🔐 尚未登入</span>，請先使用 LINE 或 Google 登入。`;
         }
@@ -52,25 +58,39 @@ function updateAuthUI() {
     if (patientEl) patientEl.textContent = currentPatientName || "—";
 
     if (shotsEl) {
-        shotsEl.textContent = String(remainingShots);
-        shotsEl.className = remainingShots > 0 ? "auth-ok" : "auth-warn";
+        if (canShootWithoutToken) {
+            shotsEl.textContent = "不限";
+            shotsEl.className = "auth-ok";
+        } else {
+            shotsEl.textContent = String(remainingShots);
+            shotsEl.className = remainingShots > 0 ? "auth-ok" : "auth-warn";
+        }
     }
 
-    if (badgeEl) badgeEl.textContent = `剩餘 ${remainingShots} 次`;
+    if (badgeEl) {
+        badgeEl.textContent = canShootWithoutToken ? "Demo 免 Token" : `剩餘 ${remainingShots} 次`;
+    }
 
     if (lineBtn) {
-        // 在 LIFF 內一般可用 LINE 自動登入；外部瀏覽器則讓使用者按按鈕嘗試。
         lineBtn.style.display = "block";
+        lineBtn.disabled = !LIFF_ID;
+        if (!LIFF_ID) {
+            lineBtn.textContent = "LINE 登入未設定（缺少 CAMERA_LIFF_ID）";
+        } else {
+            lineBtn.textContent = "使用 LINE 登入";
+        }
     }
 
-    const canShoot = isLoggedIn && hasShots;
+    const canShoot = (isLoggedIn || canShootWithoutLogin) && (canShootWithoutToken || hasShots);
     if (captureBtn) captureBtn.disabled = !canShoot;
     if (galleryBtn) galleryBtn.disabled = !canShoot;
 
-    if (!isLoggedIn) {
+    if (!isLoggedIn && !canShootWithoutLogin) {
         setQuotaMessage("請先登入並完成帳號綁定。", "info");
-    } else if (!hasShots) {
+    } else if (!canShootWithoutToken && !hasShots) {
         setQuotaMessage("拍攝額度為 0，請先輸入 Token 或掃描 QR Code 兌換。", "info");
+    } else if (canShootWithoutToken) {
+        setQuotaMessage("Demo 模式已啟用：可直接拍攝，無需 Token。", "success");
     }
 }
 
@@ -103,6 +123,9 @@ async function fetchPublicConfig() {
         if (!res.ok) return;
         const data = await res.json();
         googleClientId = data.google_client_id || "";
+        LIFF_ID = data.camera_liff_id || "";
+        demoAllowGuestUpload = Boolean(data.demo_allow_guest_upload);
+        demoSkipTokenCheck = Boolean(data.demo_skip_token_check);
     } catch (e) {
         console.warn("讀取公開設定失敗", e);
     }
@@ -192,6 +215,11 @@ async function restoreSessionIfAny() {
 }
 
 async function redeemToken(tokenCode) {
+    if (demoSkipTokenCheck) {
+        setQuotaMessage("Demo 模式下可直接拍攝，暫時不需要兌換 Token。", "success");
+        return;
+    }
+
     if (!authSessionToken) {
         setQuotaMessage("請先登入，再進行 token 兌換。", "error");
         return;
@@ -295,6 +323,11 @@ function initGoogleButtonWithRetry(retry = 0) {
 
 async function initLiffProfile() {
     try {
+        if (!LIFF_ID) {
+            console.warn("未設定 CAMERA_LIFF_ID，略過 LIFF 初始化。");
+            return;
+        }
+
         await liff.init({ liffId: LIFF_ID });
         if (liff.isLoggedIn()) {
             liffProfile = await liff.getProfile();
@@ -456,11 +489,11 @@ async function checkBrightness(file) {
 /* ── 相機觸發與上傳 ──────────────────────────────────────── */
 
 function assertCanShoot() {
-    if (!authSessionToken) {
+    if (!authSessionToken && !demoAllowGuestUpload) {
         alert("請先登入 LINE 或 Google 帳號。");
         return false;
     }
-    if (remainingShots <= 0) {
+    if (!demoSkipTokenCheck && remainingShots <= 0) {
         alert("拍攝額度不足，請先輸入 token 或掃描 QR code 兌換。\n每組 token 可獲得 10 次拍攝機會。");
         return false;
     }
@@ -497,7 +530,9 @@ async function handleFileSelected(e) {
     try {
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("session_token", authSessionToken);
+        if (authSessionToken) {
+            formData.append("session_token", authSessionToken);
+        }
         if (liffProfile?.userId) formData.append("line_user_id", liffProfile.userId);
         formData.append("device_info", navigator.userAgent.substring(0, 200));
 
@@ -511,8 +546,12 @@ async function handleFileSelected(e) {
                 updateAuthUI();
             }
             if (res.status === 401) {
-                clearSession();
-                alert("登入已失效，請重新登入。");
+                if (!demoAllowGuestUpload) {
+                    clearSession();
+                    alert("登入已失效，請重新登入。");
+                } else {
+                    alert("目前伺服器尚未啟用 Demo 免登入模式，請先登入後再試。\n（確認 .env 的 DEMO_ALLOW_GUEST_UPLOAD=true）");
+                }
                 return;
             }
             if (res.status === 403) {

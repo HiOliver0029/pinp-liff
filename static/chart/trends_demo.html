@@ -30,7 +30,7 @@
 </head>
 <body>
 
-    <div class="header">PINP 骨骼健康報告</div>
+    <div class="header">P1NP 骨骼健康報告</div>
     
     <div class="latest-card">
         <div class="data-row"><span>受檢者：</span><span id="p-name">王大明 先生</span></div>
@@ -38,7 +38,7 @@
         <hr style="border:0; border-top:1px solid #eee;">
         
         <div class="concentration-main">
-            <div style="font-size: 0.8em; color: #8c8c8c;">今日 PINP 濃度</div>
+            <div style="font-size: 0.8em; color: #8c8c8c;">今日 P1NP 濃度</div>
             <div class="concentration-value"><span id="p-value">65.5</span> ng/mL</div>
         </div>
 
@@ -77,7 +77,7 @@
             data: {
                 labels: historyData.map(d => d.date),
                 datasets: [{
-                    label: 'PINP 濃度',
+                    label: 'P1NP 濃度',
                     data: historyData.map(d => d.val),
                     borderColor: '#27ACB2',
                     backgroundColor: 'rgba(39, 172, 178, 0.1)',

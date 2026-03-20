@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from typing import Optional, Literal
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Depends, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -28,34 +29,76 @@ import models
 import processor
 import templates
 
+load_dotenv()
+
 # 確保資料表已建立
 models.Base.metadata.create_all(bind=engine)
+
+
+def _ensure_sqlite_schema_compatibility() -> None:
+    """
+    輕量 migration：補齊舊版 SQLite 缺少的欄位，避免 /api/upload 寫入失敗。
+    目前補：detection_records.device_info
+    """
+    if not str(engine.url).startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        table_rows = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        table_names = {row[0] for row in table_rows}
+        if "detection_records" not in table_names:
+            return
+
+        column_rows = conn.exec_driver_sql(
+            "PRAGMA table_info(detection_records)"
+        ).fetchall()
+        column_names = {row[1] for row in column_rows}
+
+        if "device_info" not in column_names:
+            conn.exec_driver_sql(
+                "ALTER TABLE detection_records ADD COLUMN device_info TEXT"
+            )
+            print("[DB MIGRATION] Added detection_records.device_info")
+
+
+_ensure_sqlite_schema_compatibility()
 
 app = FastAPI(title="Epoch PINP 骨骼健康監測系統")
 
 # 掛載靜態檔案 (LIFF 頁面)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 # LIFF 趨勢圖 URL（在 LINE Developers Console 取得 LIFF ID 後填入 .env）
 TRENDS_LIFF_URL = os.getenv(
     "TRENDS_LIFF_URL",
     "https://liff.line.me/YOUR_TRENDS_LIFF_ID",
 )
+CAMERA_LIFF_ID = os.getenv("CAMERA_LIFF_ID", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 ADMIN_TOKEN_ISSUER_KEY = os.getenv("ADMIN_TOKEN_ISSUER_KEY", "")
 SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "30"))
 TOKEN_DEFAULT_SHOTS = 10
-USE_LINE_WEBHOOK = os.getenv("USE_LINE_WEBHOOK", "true").strip().lower() == "true"
+USE_LINE_WEBHOOK = _env_bool("USE_LINE_WEBHOOK", "true")
+DEMO_ALLOW_GUEST_UPLOAD = _env_bool("DEMO_ALLOW_GUEST_UPLOAD", "true")
+DEMO_SKIP_TOKEN_CHECK = _env_bool("DEMO_SKIP_TOKEN_CHECK", "true")
+DEMO_GUEST_DISPLAY_NAME = os.getenv("DEMO_GUEST_DISPLAY_NAME", "Demo 使用者")
+DEMO_GUEST_LINE_USER_ID = os.getenv("DEMO_GUEST_LINE_USER_ID", "demo_guest_user")
 
 # LINE Bot 設定（金鑰建議透過環境變數注入）
 configuration = Configuration(
     access_token=os.getenv(
         "LINE_CHANNEL_ACCESS_TOKEN",
-        "B5WyfxGzkQeux13b5JsRzMlKqnPrdkijHva91lNI5l+5Gbd66MoZYSQsn1Rt49ulTU7jWaYrRxHcquLXiMNUa9f1On83mWHG2CUGAovLD01OChndBLvs2FUJtGoqLmdyelABf7MTxzCo8Zou6GcqlwdB04t89/1O/w1cDnyilFU="
+        "",
     )
 )
 handler = WebhookHandler(
-    os.getenv("LINE_CHANNEL_SECRET", "02dba6286426db7cf24ca10b1cd09ed4")
+    os.getenv("LINE_CHANNEL_SECRET", "")
 )
 
 
@@ -118,6 +161,23 @@ def _ensure_primary_patient(db: Session, user: models.User, fallback_name: str =
     return patient
 
 
+def _get_or_create_demo_user(db: Session, line_user_id: Optional[str] = None) -> models.User:
+    resolved_line_user_id = (line_user_id or "").strip() or f"demo::{DEMO_GUEST_LINE_USER_ID}"
+    user = db.query(models.User).filter(models.User.line_user_id == resolved_line_user_id).first()
+    if user:
+        if not user.display_name:
+            user.display_name = DEMO_GUEST_DISPLAY_NAME
+        return user
+
+    user = models.User(
+        line_user_id=resolved_line_user_id,
+        display_name=DEMO_GUEST_DISPLAY_NAME,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
 def _ensure_quota_wallet(db: Session, user_id: int) -> models.UserQuota:
     wallet = db.query(models.UserQuota).filter(models.UserQuota.user_id == user_id).first()
     if wallet:
@@ -178,6 +238,13 @@ def _verify_google_id_token(id_token: str) -> dict:
 def _normalize_token_code(token_code: str) -> str:
     cleaned = token_code.strip().upper().replace(" ", "")
     return cleaned
+
+
+def _is_line_user_id(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip()
+    return normalized.startswith("U") and len(normalized) >= 20
 
 
 def _build_new_token_code(prefix: str) -> str:
@@ -282,6 +349,9 @@ async def get_public_config():
     """提供前端所需公開設定。"""
     return {
         "google_client_id": GOOGLE_CLIENT_ID,
+        "camera_liff_id": CAMERA_LIFF_ID,
+        "demo_allow_guest_upload": DEMO_ALLOW_GUEST_UPLOAD,
+        "demo_skip_token_check": DEMO_SKIP_TOKEN_CHECK,
     }
 
 
@@ -997,20 +1067,30 @@ async def upload_image(
     """
     user = None
     wallet = None
+    auth_session = None
 
     if session_token:
-        auth_session = _get_session(db, session_token)
-        user = db.query(models.User).filter(models.User.id == auth_session.user_id).first()
-    elif line_user_id:
+        try:
+            auth_session = _get_session(db, session_token)
+            user = db.query(models.User).filter(models.User.id == auth_session.user_id).first()
+        except HTTPException:
+            if not DEMO_ALLOW_GUEST_UPLOAD:
+                raise
+
+    if not user and line_user_id:
         user = db.query(models.User).filter(models.User.line_user_id == line_user_id).first()
+
+    if not user and DEMO_ALLOW_GUEST_UPLOAD:
+        user = _get_or_create_demo_user(db, line_user_id=line_user_id)
 
     if not user:
         raise HTTPException(status_code=401, detail="請先登入 LINE 或 Google 帳號")
 
     patient = _ensure_primary_patient(db, user, fallback_name=user.display_name or "使用者")
+    enforce_quota = bool(auth_session) and not DEMO_SKIP_TOKEN_CHECK
 
     # session token 登入模式：強制檢查拍攝額度
-    if session_token:
+    if enforce_quota:
         wallet = _ensure_quota_wallet(db, user.id)
         if wallet.remaining_shots <= 0:
             return JSONResponse(
@@ -1058,7 +1138,7 @@ async def upload_image(
     db.commit()
 
     # 若使用者有綁定 LINE，推播 Flex Message 到聊天室
-    if user.line_user_id:
+    if _is_line_user_id(user.line_user_id):
         try:
             push_result_flex(
                 user.line_user_id,
@@ -1074,6 +1154,8 @@ async def upload_image(
         "status_color": status_color,
         "description": _STATUS_DESCRIPTIONS.get(status_color, ""),
         "remaining_shots": wallet.remaining_shots if wallet else None,
+        "demo_mode": DEMO_ALLOW_GUEST_UPLOAD,
+        "quota_enforced": enforce_quota,
     }
 
 @app.get("/api/history/{line_user_id}")

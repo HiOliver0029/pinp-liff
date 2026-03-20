@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PINP 骨骼檢測</title>
+    <title>P1NP 骨骼檢測</title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -384,14 +384,14 @@
                 <div class="quota-badge" id="quotaBadge">剩餘 0 次</div>
             </div>
             <div style="font-size:.82rem;color:#666;line-height:1.4;">
-                每組 Token / QR Code 可兌換 10 次拍攝資格，兌換後可立即使用。
+                正式模式可用 Token / QR Code 兌換拍攝資格；Demo 模式可直接拍攝。
             </div>
-            <input id="tokenInput" class="quota-input" placeholder="輸入試紙包 Token（例：PINP-AB12-CD34）" />
+            <input id="tokenInput" class="quota-input" placeholder="輸入試紙包 Token（Demo 可略過）" />
             <div class="quota-actions">
                 <button class="redeem-btn" id="redeemTokenBtn" onclick="redeemTokenFromInput()">兌換 Token</button>
                 <button class="scan-btn" id="scanQrBtn" onclick="triggerQrScan()">掃描 QR 兌換</button>
             </div>
-            <div class="quota-msg" id="quotaMsg">請先登入並兌換額度後再拍照。</div>
+            <div class="quota-msg" id="quotaMsg">載入中，正在檢查是否為 Demo 模式…</div>
         </div>
 
         <div class="guide-area">

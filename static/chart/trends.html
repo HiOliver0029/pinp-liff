@@ -102,7 +102,7 @@
 <body>
 
 <div class="header">
-    <h2>PINP 數據趨勢</h2>
+    <h2>P1NP 數據趨勢</h2>
     <p>近期骨骼健康監測紀錄</p>
 </div>
 
@@ -140,17 +140,17 @@
     const STATUS_INFO = {
         green:  {
             title: "目前狀態：良好的藥效反應 ✅",
-            desc:  "根據近期數據，PINP 濃度良好，顯示骨骼正在有效生長，藥效反應佳。請保持目前的藥物與生活習慣。此報告可作為下次診間回診時的參考數據。",
+            desc:  "根據近期數據，P1NP 濃度良好，顯示骨骼正在有效生長，藥效反應佳。請保持目前的藥物與生活習慣。此報告可作為下次診間回診時的參考數據。",
             cls:   "",
         },
         yellow: {
             title: "目前狀態：骨骼狀態穩定 🟡",
-            desc:  "PINP 濃度維持在穩定範圍，繼續遵照醫師指示用藥，定期監測即可。",
+            desc:  "P1NP 濃度維持在穩定範圍，繼續遵照醫師指示用藥，定期監測即可。",
             cls:   "yellow",
         },
         red: {
             title: "⚠️ 目前狀態：需警示",
-            desc:  "PINP 濃度偏低，建議儘快聯絡主治醫師評估是否需要調整藥物療程。",
+            desc:  "P1NP 濃度偏低，建議儘快聯絡主治醫師評估是否需要調整藥物療程。",
             cls:   "red",
         },
     };
@@ -162,7 +162,7 @@
         data: {
             labels: [],
             datasets: [{
-                label: "PINP 濃度",
+                label: "P1NP 濃度",
                 data: [],
                 borderColor: "#28a745",
                 backgroundColor: "rgba(40, 167, 69, 0.1)",
@@ -202,7 +202,7 @@
 
         if (!data || data.length === 0) {
             document.getElementById("statusTitle").textContent = "尚無檢測記錄";
-            document.getElementById("statusDesc").textContent = "請先完成首次 PINP 試紙檢測。";
+            document.getElementById("statusDesc").textContent = "請先完成首次 P1NP 試紙檢測。";
             return;
         }
 

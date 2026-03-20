@@ -1,6 +1,6 @@
-# Epoch PINP 骨骼健康監測系統
+# Epoch P1NP 骨骼健康監測系統
 
-> 結合 LINE Bot、LIFF 相機介面與 AI 影像判讀，讓家屬在家即可完成 PINP 骨鬆標誌物定量檢測。
+> 結合 LINE Bot、LIFF 相機介面與 AI 影像判讀，讓家屬在家即可完成 P1NP 骨鬆標誌物定量檢測。
 
 ---
 
@@ -39,7 +39,7 @@
 
 - **前端**：LINE LIFF (HTML5) — 步驟引導相機、倒數計時、結果顯示
 - **後端**：Python FastAPI — Webhook 處理、AI 影像分析、REST API
-- **資料庫**：SQLite (SQLAlchemy ORM) — 儲存使用者、病患、PINP 歷史紀錄
+- **資料庫**：SQLite (SQLAlchemy ORM) — 儲存使用者、病患、P1NP 歷史紀錄
 - **AI**：OpenCV — 白平衡校正、T/C 線灰階強度提取、T/C 比值換算濃度
 
 ---
@@ -50,7 +50,7 @@
 - 接收家屬傳送的試紙照片
 - 執行 AI 影像判讀（白平衡校正 → C 線有效驗證 → T/C 比值換算）
 - 自動建立使用者與病患檔案
-- 回覆彩色 **Flex Message 骨骼動力報告卡**（含 PINP 數值、三色狀態、骨骼動力條）
+- 回覆彩色 **Flex Message 骨骼動力報告卡**（含 P1NP 數值、三色狀態、骨骼動力條）
 
 ### LIFF 拍照介面（`/static/camera/`）
 | 步驟 | 說明 |
@@ -58,7 +58,7 @@
 | 1. 準備耗材 | 確認試紙、採血筆、酒精棉片、30 µL 採血管 |
 | 2. 反應計時 | 15 分鐘 SVG 倒數計時，避免過早拍照導致數值偏差 |
 | 3. 拍照判讀 | 試紙對準框 + 自動亮度偵測（提示開燈） |
-| 4. 查看結果 | 即時顯示 PINP 濃度、三色狀態、骨骼動力條 |
+| 4. 查看結果 | 即時顯示 P1NP 濃度、三色狀態、骨骼動力條 |
 
 ### 歷史趨勢圖表（`/static/chart/trends.html`）
 - 從 `/api/history/{line_user_id}` 動態載入最近 12 筆紀錄
@@ -66,7 +66,7 @@
 - 下方骨骼動力條 + 狀態摘要文字
 
 ### 三色骨骼狀態判斷
-| 顏色 | PINP 濃度 | 意義 |
+| 顏色 | P1NP 濃度 | 意義 |
 |------|-----------|------|
 | 🟢 綠色 | > 50 ng/mL | 骨骼生長良好，藥效反應佳 |
 | 🟡 黃色 | 25–50 ng/mL | 骨骼狀態穩定，持續觀察 |
@@ -118,6 +118,11 @@ LINE_CHANNEL_SECRET=你的_Channel_Secret
 |----------|------|----------|
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API 存取金鑰 | LINE Developers Console → Messaging API → Channel access token |
 | `LINE_CHANNEL_SECRET` | LINE Channel 密鑰 | LINE Developers Console → Basic settings → Channel secret |
+| `CAMERA_LIFF_ID` | 相機頁 LIFF ID（`/static/camera/index.html`） | LINE Developers Console → LIFF |
+| `TRENDS_LIFF_URL` | 趨勢頁 LIFF 連結（可含 LIFF ID） | LINE Developers Console → LIFF |
+| `GOOGLE_CLIENT_ID` | Google Sign-In OAuth Client ID | Google Cloud Console → Credentials |
+| `DEMO_ALLOW_GUEST_UPLOAD` | `true` 時允許未登入直接上傳（Demo） | `.env` |
+| `DEMO_SKIP_TOKEN_CHECK` | `true` 時跳過 token/額度檢查（Demo） | `.env` |
 
 ---
 
@@ -160,9 +165,8 @@ ngrok http 8000
 2. Size 選擇 `Full`
 3. Endpoint URL 填入 `https://你的網域/static/camera/index.html`
 4. Scopes 勾選 `openid`、`profile`
-5. 取得 LIFF ID 後，填入以下兩個檔案的 `YOUR_LIFF_ID`：
-   - `static/camera/app.js` → 第 1 行 `const LIFF_ID`
-   - `static/chart/trends.html` → script 區塊的 `const LIFF_ID`
+5. 取得 LIFF ID 後，填入 `.env` 的 `CAMERA_LIFF_ID`
+6. `TRENDS_LIFF_URL` 請填入趨勢頁 LIFF 完整 URL（例如 `https://liff.line.me/{LIFF_ID}`）
 
 ### 3. 圖文選單（建議格式）
 | 位置 | 功能 | 動作 |
@@ -179,7 +183,7 @@ ngrok http 8000
 |------|------|------|
 | `POST` | `/callback` | LINE Webhook 接收端點 |
 | `POST` | `/api/upload` | LIFF 直接上傳試紙圖片（multipart/form-data） |
-| `GET` | `/api/history/{line_user_id}` | 取得使用者最近 12 筆 PINP 紀錄 |
+| `GET` | `/api/history/{line_user_id}` | 取得使用者最近 12 筆 P1NP 紀錄 |
 | `GET` | `/health` | 服務健康檢查 |
 | `GET` | `/static/*` | LIFF 靜態頁面 |
 
@@ -230,8 +234,8 @@ pinp-liff/
 ```
 User (照顧者)
  └── Patient (受照護長輩，1 對多)
-      └── DetectionRecord (PINP 檢測紀錄，1 對多)
-           ├── concentration  PINP 濃度 (ng/mL)
+      └── DetectionRecord (P1NP 檢測紀錄，1 對多)
+           ├── concentration  P1NP 濃度 (ng/mL)
            ├── gray_value     T 線原始灰階強度
            ├── status_color   green / yellow / red
            ├── image_path     試紙圖片儲存路徑
@@ -250,7 +254,7 @@ User (照顧者)
 - [x] `/api/history` 歷史趨勢 API
 - [x] 歷史趨勢圖表（動態三色、骨骼動力條）
 - [x] SQLite 資料持久化（User / Patient / DetectionRecord）
-- [ ] 填入真實 LIFF ID（`static/camera/app.js`、`static/chart/trends.html`）
+- [ ] 在部署環境填入真實 `CAMERA_LIFF_ID` 與 `GOOGLE_CLIENT_ID`
 - [ ] 以長庚標準校準數據調整 AI 迴歸係數（processor.py）
 - [ ] 部署至雲端伺服器（GCP / AWS）並設定正式 Webhook URL
 - [ ] 診間摘要報告 PDF 產生功能
