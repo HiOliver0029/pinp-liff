@@ -20,7 +20,7 @@ from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest,
-    TextMessage, FlexMessage, FlexContainer
+    TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
 from linebot.v3.webhooks import MessageEvent, ImageMessageContent, TextMessageContent, FollowEvent
 
@@ -89,6 +89,10 @@ DEMO_ALLOW_GUEST_UPLOAD = _env_bool("DEMO_ALLOW_GUEST_UPLOAD", "true")
 DEMO_SKIP_TOKEN_CHECK = _env_bool("DEMO_SKIP_TOKEN_CHECK", "true")
 DEMO_GUEST_DISPLAY_NAME = os.getenv("DEMO_GUEST_DISPLAY_NAME", "Demo 使用者")
 DEMO_GUEST_LINE_USER_ID = os.getenv("DEMO_GUEST_LINE_USER_ID", "demo_guest_user")
+RENDER_URL = os.getenv("RENDER_URL", "").strip().rstrip("/")
+CAMERA_WEB_URL = os.getenv("CAMERA_WEB_URL", "").strip()
+PURCHASE_KIT_URL = os.getenv("PURCHASE_KIT_URL", "").strip()
+BOT_ASSETS_PATH_PREFIX = os.getenv("BOT_ASSETS_PATH_PREFIX", "/static/bot_assets").strip() or "/static/bot_assets"
 
 # LINE Bot 設定（金鑰建議透過環境變數注入）
 configuration = Configuration(
@@ -342,6 +346,171 @@ def _reply_text(reply_token: str, text: str) -> None:
                 messages=[TextMessage(text=text)],
             )
         )
+
+
+def _reply_messages(reply_token: str, messages: list) -> None:
+    """回覆多則訊息（LINE API 單次上限 5 則）。"""
+    if not messages:
+        return
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=messages[:5],
+            )
+        )
+
+
+def _to_public_url(path_or_url: str) -> str:
+    if not path_or_url:
+        return ""
+
+    candidate = path_or_url.strip()
+    if candidate.startswith("https://") or candidate.startswith("http://"):
+        return candidate
+
+    if not RENDER_URL:
+        return ""
+
+    if not candidate.startswith("/"):
+        candidate = "/" + candidate
+    return f"{RENDER_URL}{candidate}"
+
+
+def _asset_url(filename: str) -> str:
+    prefix = BOT_ASSETS_PATH_PREFIX
+    if not prefix.startswith("/"):
+        prefix = "/" + prefix
+    prefix = prefix.rstrip("/")
+    return _to_public_url(f"{prefix}/{filename}")
+
+
+def _build_image_message(image_url: str) -> Optional[ImageMessage]:
+    """建立 LINE 圖片訊息。LINE ImageMessage 需使用 HTTPS URL。"""
+    if not image_url or not image_url.startswith("https://"):
+        return None
+    return ImageMessage(
+        original_content_url=image_url,
+        preview_image_url=image_url,
+    )
+
+
+def _looks_placeholder_url(url: str) -> bool:
+    return not url or "YOUR_" in url
+
+
+def _camera_entry_url() -> str:
+    if CAMERA_LIFF_ID:
+        return f"https://liff.line.me/{CAMERA_LIFF_ID}"
+    if CAMERA_WEB_URL:
+        return CAMERA_WEB_URL
+    return _to_public_url("/static/camera/index.html")
+
+
+def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
+    """
+    callback 模式下，手動接管 LINE Official Account Manager 的關鍵字回覆。
+    目的：即使啟用 webhook，也能維持同一套圖片式自動回覆體驗。
+    """
+    normalized = "".join((incoming_text or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    def _send(images: list[str], texts: list[str]) -> bool:
+        messages = []
+        for file_name in images:
+            image_message = _build_image_message(_asset_url(file_name))
+            if image_message:
+                messages.append(image_message)
+
+        for text in texts:
+            if text:
+                messages.append(TextMessage(text=text))
+
+        if not messages:
+            return False
+
+        _reply_messages(reply_token, messages)
+        return True
+
+    camera_url = _camera_entry_url()
+    trends_url = TRENDS_LIFF_URL if not _looks_placeholder_url(TRENDS_LIFF_URL) else ""
+
+    if any(k in normalized for k in ("產品介紹", "產品", "介紹")):
+        return _send(
+            images=["product_intro.jpg"],
+            texts=["📘 產品介紹已為您送達，若要看操作流程可輸入：使用說明"],
+        )
+
+    if any(k in normalized for k in ("使用說明", "說明", "圖文", "使用")):
+        return _send(
+            images=["menu_full.jpg", "product_intro.png"],
+            texts=[
+                "📌 使用訊息\n"
+                "• 本技術與醫院大型機器（ECLIA）相關性高達 R^2 = 0.99。\n"
+                "• 居家試紙材料成本約 NT$150，遠低於醫院檢測。\n"
+                "• 採集 30 μL 微量血清並拍攝試紙即可完成分析。",
+            ],
+        )
+
+    if any(k in normalized for k in ("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
+        return _send(
+            images=["history_report.jpg"],
+            texts=[
+                (
+                    f"📈 查看骨骼健康數據：\n{trends_url}"
+                    if trends_url
+                    else "📈 已收到「歷史資料」需求。請先設定 TRENDS_LIFF_URL 後即可一鍵開啟趨勢頁。"
+                )
+            ],
+        )
+
+    if any(k in normalized for k in ("骨骼檢測", "開始骨骼檢測", "拍照", "檢測")):
+        return _send(
+            images=["start_detect.jpg"],
+            texts=[
+                (
+                    f"📸 前往骨骼檢測：\n{camera_url}"
+                    if camera_url
+                    else "📸 已收到檢測需求，請先設定 CAMERA_LIFF_ID（或 CAMERA_WEB_URL）以啟用一鍵進入。"
+                )
+            ],
+        )
+
+    if any(k in normalized for k in ("價格", "多少錢", "價錢", "費用", "購買", "套裝", "監測套裝包")):
+        return _send(
+            images=["buy_kit.jpg", "product_intro.png"],
+            texts=[
+                (
+                    f"🛒 購買監測套裝包：\n{PURCHASE_KIT_URL}"
+                    if PURCHASE_KIT_URL
+                    else "🛒 居家試紙材料成本約 NT$150；若要購買套裝包，請設定 PURCHASE_KIT_URL。"
+                )
+            ],
+        )
+
+    if any(k in normalized for k in ("測量準確度", "準確", "準確嗎", "準確度", "r2")):
+        return _send(
+            images=["product_intro.png"],
+            texts=[
+                "✅ 測量準確度\n"
+                "本技術與醫院 ECLIA 機器相關性達 R^2 = 0.99，"
+                "目前用於居家監測與趨勢追蹤。"
+            ],
+        )
+
+    if any(k in normalized for k in ("試紙怎麼用", "怎麼用", "採血", "教學")):
+        return _send(
+            images=["product_intro.png"],
+            texts=[
+                "🧪 試紙怎麼用\n"
+                "1) 採集 30 μL 微量血清\n"
+                "2) 滴入試紙並等待反應\n"
+                "3) 開啟骨骼檢測頁拍照分析"
+            ],
+        )
+
+    return False
 
 
 @app.get("/api/config/public")
@@ -921,7 +1090,7 @@ def handle_text(event):
     """
     處理使用者傳送的文字訊息。
     - 若正在等待輸入姓名 → 儲存姓名，完成 Onboarding
-    - 否則 → 顯示使用說明
+    - 否則 → 依關鍵字回覆圖片訊息
     """
     db = SessionLocal()
     try:
@@ -962,9 +1131,12 @@ def handle_text(event):
             )
             return
 
+        # ── 關鍵字圖片回覆（取代 LINE Official Account Manager 關鍵字） ──
+        if _handle_keyword_auto_reply(event.reply_token, text):
+            return
+
         # ── 一般文字：不做預設回覆 ──
-        # 目的：保留 LINE Biz 後台設定的關鍵字回覆，不由 webhook 蓋掉。
-        # 仍保留 webhook 指令：重設姓名 / 改名 / 設定姓名，以及 onboarding 姓名輸入流程。
+        # 未匹配到關鍵字時保持靜默，避免過度打擾。
         return
     except Exception as e:
         print(f"handle_text 錯誤: {e}")

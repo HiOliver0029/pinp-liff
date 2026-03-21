@@ -119,7 +119,10 @@ LINE_CHANNEL_SECRET=你的_Channel_Secret
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API 存取金鑰 | LINE Developers Console → Messaging API → Channel access token |
 | `LINE_CHANNEL_SECRET` | LINE Channel 密鑰 | LINE Developers Console → Basic settings → Channel secret |
 | `CAMERA_LIFF_ID` | 相機頁 LIFF ID（`/static/camera/index.html`） | LINE Developers Console → LIFF |
+| `CAMERA_WEB_URL` | 未設定 LIFF ID 時的檢測頁備援網址 | `.env` |
 | `TRENDS_LIFF_URL` | 趨勢頁 LIFF 連結（可含 LIFF ID） | LINE Developers Console → LIFF |
+| `PURCHASE_KIT_URL` | 「購買監測套裝包」導向連結 | `.env` |
+| `BOT_ASSETS_PATH_PREFIX` | webhook 關鍵字圖片素材路徑前綴（預設 `/static/bot_assets`） | `.env` |
 | `GOOGLE_CLIENT_ID` | Google Sign-In OAuth Client ID | Google Cloud Console → Credentials |
 | `DEMO_ALLOW_GUEST_UPLOAD` | `true` 時允許未登入直接上傳（Demo） | `.env` |
 | `DEMO_SKIP_TOKEN_CHECK` | `true` 時跳過 token/額度檢查（Demo） | `.env` |
@@ -174,6 +177,9 @@ ngrok http 8000
 | 左側大按鈕 | 開始骨骼檢測 | 連結 → LIFF 相機 URL |
 | 右上按鈕 | 歷史數據 / 醫師報告 | 連結 → LIFF 趨勢圖 URL |
 | 右下按鈕 | 購買監測套裝包 | 連結 → 購買頁面 |
+
+> 若已啟用 webhook（`USE_LINE_WEBHOOK=true`），LINE Official Account Manager 的「關鍵字回應」通常不會直接生效。
+> 本專案已在 callback 內建同等關鍵字圖片回覆（如：產品介紹、使用說明、歷史資料、骨骼檢測）。
 
 ---
 
