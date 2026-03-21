@@ -442,19 +442,19 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
     if _matches_any(("產品介紹", "產品", "介紹")):
         return _send(
             images=["product_intro.jpg"],
-            texts=["📘 產品介紹已為您送達，若要看操作流程可輸入：使用說明"],
+            # texts=["📘 產品介紹已為您送達，若要看操作流程可輸入：使用說明"],
         )
 
-    if _matches_any(("使用說明", "圖文說明", "圖文", "help", "幫助")):
-        return _send(
-            images=["menu_full.jpg", "product_intro.jpg"],
-            texts=[
-                "📌 使用訊息\n"
-                "• 本技術與醫院大型機器（ECLIA）相關性高達 R^2 = 0.99。\n"
-                "• 居家試紙材料成本約 NT$150，遠低於醫院檢測。\n"
-                "• 採集 30 μL 微量血清並拍攝試紙即可完成分析。",
-            ],
-        )
+    # if _matches_any(("使用說明", "圖文說明", "圖文", "help", "幫助")):
+    #     return _send(
+    #         images=["menu_full.jpg", "product_intro.jpg"],
+    #         texts=[
+    #             "📌 使用訊息\n"
+    #             "• 本技術與醫院大型機器（ECLIA）相關性高達 R^2 = 0.99。\n"
+    #             "• 居家試紙材料成本約 NT$150，遠低於醫院檢測。\n"
+    #             "• 採集 30 μL 微量血清並拍攝試紙即可完成分析。",
+    #         ],
+    #     )
 
     if _matches_any(("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
         return _send(
@@ -468,33 +468,33 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if _matches_any(("骨骼檢測", "開始骨骼檢測", "拍照檢測", "拍照")):
-        return _send(
-            images=["start_detect.jpg"],
-            texts=[
-                (
-                    f"📸 前往骨骼檢測：\n{camera_url}"
-                    if camera_url
-                    else "📸 已收到檢測需求，請先設定 CAMERA_LIFF_ID（或 CAMERA_WEB_URL）以啟用一鍵進入。"
-                )
-            ],
-        )
+    # if _matches_any(("骨骼檢測", "開始骨骼檢測", "拍照檢測", "拍照")):
+    #     return _send(
+    #         images=["start_detect.jpg"],
+    #         texts=[
+    #             (
+    #                 f"📸 前往骨骼檢測：\n{camera_url}"
+    #                 if camera_url
+    #                 else "📸 已收到檢測需求，請先設定 CAMERA_LIFF_ID（或 CAMERA_WEB_URL）以啟用一鍵進入。"
+    #             )
+    #         ],
+    #     )
 
-    if _matches_any(("價格", "多少錢", "價錢", "費用", "購買", "套裝", "監測套裝包")):
-        return _send(
-            images=["buy_kit.jpg", "product_intro.jpg"],
-            texts=[
-                (
-                    f"🛒 購買監測套裝包：\n{PURCHASE_KIT_URL}"
-                    if PURCHASE_KIT_URL
-                    else "🛒 居家試紙材料成本約 NT$150；若要購買套裝包，請設定 PURCHASE_KIT_URL。"
-                )
-            ],
-        )
+    # if _matches_any(("價格", "多少錢", "價錢", "費用", "購買", "套裝", "監測套裝包")):
+    #     return _send(
+    #         images=["buy_kit.jpg", "product_intro.jpg"],
+    #         texts=[
+    #             (
+    #                 f"🛒 購買監測套裝包：\n{PURCHASE_KIT_URL}"
+    #                 if PURCHASE_KIT_URL
+    #                 else "🛒 居家試紙材料成本約 NT$150；若要購買套裝包，請設定 PURCHASE_KIT_URL。"
+    #             )
+    #         ],
+    #     )
 
     if _matches_any(("測量準確度", "準確嗎", "準確度", "r2")):
         return _send(
-            images=["product_intro.jpg"],
+            # images=["product_intro.jpg"],
             texts=[
                 "✅ 測量準確度\n"
                 "本技術與醫院 ECLIA 機器相關性達 R^2 = 0.99，"
@@ -504,7 +504,7 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
 
     if _matches_any(("試紙怎麼用", "怎麼用", "採血", "教學")):
         return _send(
-            images=["product_intro.jpg"],
+            # images=["product_intro.jpg"],
             texts=[
                 "🧪 試紙怎麼用\n"
                 "1) 採集 30 μL 微量血清\n"
