@@ -129,7 +129,15 @@
 </div>
 
 <script>
-    const LIFF_ID = "YOUR_LIFF_ID"; // ← 請替換為實際 LIFF ID
+    let LIFF_ID = "";
+
+    const DEMO_DATA = [
+        { date: "2026-01-10", concentration: 32.4, color: "yellow" },
+        { date: "2026-01-25", concentration: 28.8, color: "yellow" },
+        { date: "2026-02-10", concentration: 36.2, color: "yellow" },
+        { date: "2026-02-24", concentration: 44.9, color: "yellow" },
+        { date: "2026-03-10", concentration: 65.5, color: "green" },
+    ];
 
     const COLOR_MAP = {
         green:  "#28a745",
@@ -195,10 +203,7 @@
         },
     });
 
-    async function loadTrendData(userId) {
-        const response = await fetch(`/api/history/${encodeURIComponent(userId)}`);
-        if (!response.ok) throw new Error("API 錯誤");
-        const data = await response.json();
+    function renderTrendData(data, isDemo = false) {
 
         if (!data || data.length === 0) {
             document.getElementById("statusTitle").textContent = "尚無檢測記錄";
@@ -232,18 +237,53 @@
         const fill = document.getElementById("powerBarFill");
         fill.style.background = COLOR_MAP[lastColor];
         fill.style.width = Math.min(100, Math.round(lastValue)) + "%";
+
+        if (isDemo) {
+            document.getElementById("statusDesc").textContent += "（目前顯示 Demo 模擬數據 5 筆）";
+        }
+    }
+
+    async function loadTrendData(userId) {
+        const response = await fetch(`/api/history/${encodeURIComponent(userId)}`);
+        if (!response.ok) throw new Error("API 錯誤");
+        const data = await response.json();
+        renderTrendData(data, false);
+    }
+
+    async function getLiffIdFromConfig() {
+        try {
+            const res = await fetch("/api/config/public");
+            if (!res.ok) return "";
+            const data = await res.json();
+            const id = String(data.camera_liff_id || "").trim();
+            if (!id || id.includes("YOUR_") || id.includes("liff_id")) return "";
+            return id;
+        } catch {
+            return "";
+        }
+    }
+
+    function showDemoData(reason = "") {
+        if (reason) console.warn("切換為 Demo 數據：", reason);
+        renderTrendData(DEMO_DATA, true);
     }
 
     async function main() {
         try {
+            LIFF_ID = await getLiffIdFromConfig();
+
+            if (!LIFF_ID || typeof liff === "undefined") {
+                showDemoData("缺少 LIFF_ID 或 LIFF SDK");
+                return;
+            }
+
             await liff.init({ liffId: LIFF_ID });
             if (!liff.isLoggedIn()) { liff.login(); return; }
             const profile = await liff.getProfile();
             await loadTrendData(profile.userId);
         } catch (e) {
             console.error(e);
-            document.getElementById("statusTitle").textContent = "無法載入資料";
-            document.getElementById("statusDesc").textContent  = "請確認網路連線，或重新開啟此頁面。";
+            showDemoData("歷史資料載入失敗");
         }
     }
 

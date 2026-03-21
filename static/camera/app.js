@@ -649,28 +649,47 @@ function showResult(data) {
 /* ── 關閉 LIFF ───────────────────────────────────────────── */
 
 function closeLiff() {
+    let closeAttempted = false;
+
     try {
-        if (typeof liff !== "undefined" && liff.isInClient && liff.isInClient()) {
+        if (typeof liff !== "undefined" && typeof liff.closeWindow === "function") {
+            closeAttempted = true;
             liff.closeWindow();
-            return;
         }
     } catch {
         // ignore
     }
 
-    try {
-        if (window.history.length > 1) {
-            window.history.back();
-            return;
-        }
-    } catch {
-        // ignore
-    }
-
-    window.close();
     setTimeout(() => {
-        alert("若視窗未自動關閉，請點左上角返回上一頁。\n（LINE 內建瀏覽器通常可正常關閉）");
-    }, 250);
+        try {
+            if (window.history.length > 1) {
+                window.history.back();
+                return;
+            }
+        } catch {
+            // ignore
+        }
+
+        try {
+            window.close();
+        } catch {
+            // ignore
+        }
+
+        try {
+            window.location.href = "line://nv/chat";
+        } catch {
+            // ignore
+        }
+
+        setTimeout(() => {
+            if (closeAttempted) {
+                alert("若視窗仍未關閉，請點左上角返回上一頁。\n（你目前可能在外部瀏覽器，無法直接關閉）");
+            } else {
+                alert("此頁非 LIFF 內嵌頁面，請點左上角返回上一頁。");
+            }
+        }, 250);
+    }, 150);
 }
 
 /* ── 主流程 ──────────────────────────────────────────────── */
