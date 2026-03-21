@@ -307,7 +307,7 @@
 <body>
 
 <div class="header">
-    <h1>PINP 骨骼健康檢測</h1>
+    <h1>P1NP 骨骼健康檢測</h1>
     <p>請依步驟操作，確保數據準確</p>
 </div>
 
@@ -413,11 +413,11 @@
             </div>
         </div>
         <!-- 相機拍照：capture="environment" 將直接開啟後鏡頭 -->
-        <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+        <input type="file" id="cameraInput" accept="image/*" capture="environment" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;">
         <!-- 相尊上傳：不帶 capture 屬性，允許選擇相簿中的照片 -->
-        <input type="file" id="galleryInput" accept="image/*" style="display:none">
+        <input type="file" id="galleryInput" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;">
         <!-- QR 掃描：使用相機拍 QR 後解碼 -->
-        <input type="file" id="qrInput" accept="image/*" capture="environment" style="display:none">
+        <input type="file" id="qrInput" accept="image/*" capture="environment" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;">
         <div style="display:flex;gap:10px;margin-top:16px;">
             <button class="btn" id="captureBtn" style="flex:1;" onclick="triggerCamera()">📷 相機拍照</button>
             <button class="btn secondary" id="galleryBtn" style="flex:1;" onclick="triggerGallery()">🖼️ 相簿上傳</button>

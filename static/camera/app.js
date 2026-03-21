@@ -17,6 +17,23 @@ let googleClientId = "";
 let demoAllowGuestUpload = false;
 let demoSkipTokenCheck = false;
 
+function normalizeLiffId(rawId) {
+    const value = String(rawId || "").trim();
+    if (!value) return "";
+
+    const lower = value.toLowerCase();
+    if (
+        lower.includes("your_") ||
+        lower.includes("liff_id") ||
+        lower === "camera_liff_id" ||
+        lower === "your_camera_liff_id_here"
+    ) {
+        return "";
+    }
+
+    return value;
+}
+
 /* ── 共用 UI Helpers ───────────────────────────────────────── */
 
 function setQuotaMessage(message, tone = "info") {
@@ -72,10 +89,11 @@ function updateAuthUI() {
     }
 
     if (lineBtn) {
+        const canUseLineLogin = Boolean(LIFF_ID || liffProfile?.userId);
         lineBtn.style.display = "block";
-        lineBtn.disabled = !LIFF_ID;
-        if (!LIFF_ID) {
-            lineBtn.textContent = "LINE 登入未設定（缺少 CAMERA_LIFF_ID）";
+        lineBtn.disabled = !canUseLineLogin;
+        if (!canUseLineLogin) {
+            lineBtn.textContent = "請從 LINE 圖文選單開啟（或設定 CAMERA_LIFF_ID）";
         } else {
             lineBtn.textContent = "使用 LINE 登入";
         }
@@ -123,7 +141,7 @@ async function fetchPublicConfig() {
         if (!res.ok) return;
         const data = await res.json();
         googleClientId = data.google_client_id || "";
-        LIFF_ID = data.camera_liff_id || "";
+        LIFF_ID = normalizeLiffId(data.camera_liff_id);
         demoAllowGuestUpload = Boolean(data.demo_allow_guest_upload);
         demoSkipTokenCheck = Boolean(data.demo_skip_token_check);
     } catch (e) {
@@ -259,6 +277,18 @@ async function manualLineLogin() {
             throw new Error("目前環境不支援 LINE LIFF");
         }
 
+        if (!liffProfile && LIFF_ID) {
+            try {
+                await liff.init({ liffId: LIFF_ID });
+            } catch (initErr) {
+                console.warn("手動 LINE 登入前 LIFF 初始化失敗", initErr);
+            }
+        }
+
+        if (!LIFF_ID && !liffProfile?.userId) {
+            throw new Error("缺少可用的 LIFF 身分資訊，請由 LINE 圖文選單重新進入。\n（並確認部署環境有設定 CAMERA_LIFF_ID）");
+        }
+
         if (!liff.isLoggedIn()) {
             liff.login();
             return;
@@ -271,7 +301,7 @@ async function manualLineLogin() {
         await loginWithLine();
     } catch (e) {
         console.error(e);
-        alert("LINE 登入失敗，請改用 Google 登入或稍後重試。");
+        alert(e?.message || "LINE 登入失敗，請改用 Google 登入或稍後重試。");
     }
 }
 
@@ -502,12 +532,18 @@ function assertCanShoot() {
 
 function triggerCamera() {
     if (!assertCanShoot()) return;
-    document.getElementById("cameraInput").click();
+    const input = document.getElementById("cameraInput");
+    if (!input) return;
+    if (typeof input.showPicker === "function") input.showPicker();
+    else input.click();
 }
 
 function triggerGallery() {
     if (!assertCanShoot()) return;
-    document.getElementById("galleryInput").click();
+    const input = document.getElementById("galleryInput");
+    if (!input) return;
+    if (typeof input.showPicker === "function") input.showPicker();
+    else input.click();
 }
 
 async function handleFileSelected(e) {
@@ -621,7 +657,20 @@ function closeLiff() {
     } catch {
         // ignore
     }
+
+    try {
+        if (window.history.length > 1) {
+            window.history.back();
+            return;
+        }
+    } catch {
+        // ignore
+    }
+
     window.close();
+    setTimeout(() => {
+        alert("若視窗未自動關閉，請點左上角返回上一頁。\n（LINE 內建瀏覽器通常可正常關閉）");
+    }, 250);
 }
 
 /* ── 主流程 ──────────────────────────────────────────────── */

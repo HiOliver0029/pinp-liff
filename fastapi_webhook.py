@@ -416,6 +416,9 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
     if not normalized:
         return False
 
+    def _matches_any(keywords: tuple[str, ...]) -> bool:
+        return any((normalized == k) or (k in normalized) for k in keywords)
+
     def _send(images: list[str], texts: list[str]) -> bool:
         messages = []
         for file_name in images:
@@ -436,15 +439,15 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
     camera_url = _camera_entry_url()
     trends_url = TRENDS_LIFF_URL if not _looks_placeholder_url(TRENDS_LIFF_URL) else ""
 
-    if any(k in normalized for k in ("產品介紹", "產品", "介紹")):
+    if _matches_any(("產品介紹", "產品", "介紹")):
         return _send(
             images=["product_intro.jpg"],
             texts=["📘 產品介紹已為您送達，若要看操作流程可輸入：使用說明"],
         )
 
-    if any(k in normalized for k in ("使用說明", "說明", "圖文", "使用")):
+    if _matches_any(("使用說明", "圖文說明", "圖文", "help", "幫助")):
         return _send(
-            images=["menu_full.jpg", "product_intro.png"],
+            images=["menu_full.jpg", "product_intro.jpg"],
             texts=[
                 "📌 使用訊息\n"
                 "• 本技術與醫院大型機器（ECLIA）相關性高達 R^2 = 0.99。\n"
@@ -453,7 +456,7 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if any(k in normalized for k in ("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
+    if _matches_any(("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
         return _send(
             images=["history_report.jpg"],
             texts=[
@@ -465,7 +468,7 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if any(k in normalized for k in ("骨骼檢測", "開始骨骼檢測", "拍照", "檢測")):
+    if _matches_any(("骨骼檢測", "開始骨骼檢測", "拍照檢測", "拍照")):
         return _send(
             images=["start_detect.jpg"],
             texts=[
@@ -477,9 +480,9 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if any(k in normalized for k in ("價格", "多少錢", "價錢", "費用", "購買", "套裝", "監測套裝包")):
+    if _matches_any(("價格", "多少錢", "價錢", "費用", "購買", "套裝", "監測套裝包")):
         return _send(
-            images=["buy_kit.jpg", "product_intro.png"],
+            images=["buy_kit.jpg", "product_intro.jpg"],
             texts=[
                 (
                     f"🛒 購買監測套裝包：\n{PURCHASE_KIT_URL}"
@@ -489,9 +492,9 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if any(k in normalized for k in ("測量準確度", "準確", "準確嗎", "準確度", "r2")):
+    if _matches_any(("測量準確度", "準確嗎", "準確度", "r2")):
         return _send(
-            images=["product_intro.png"],
+            images=["product_intro.jpg"],
             texts=[
                 "✅ 測量準確度\n"
                 "本技術與醫院 ECLIA 機器相關性達 R^2 = 0.99，"
@@ -499,9 +502,9 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
             ],
         )
 
-    if any(k in normalized for k in ("試紙怎麼用", "怎麼用", "採血", "教學")):
+    if _matches_any(("試紙怎麼用", "怎麼用", "採血", "教學")):
         return _send(
-            images=["product_intro.png"],
+            images=["product_intro.jpg"],
             texts=[
                 "🧪 試紙怎麼用\n"
                 "1) 採集 30 μL 微量血清\n"
