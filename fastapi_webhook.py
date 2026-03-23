@@ -456,17 +456,17 @@ def _handle_keyword_auto_reply(reply_token: str, incoming_text: str) -> bool:
     #         ],
     #     )
 
-    if _matches_any(("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
-        return _send(
-            images=["history_report.jpg"],
-            texts=[
-                (
-                    f"📈 查看骨骼健康數據：\n{trends_url}"
-                    if trends_url
-                    else "📈 已收到「歷史資料」需求。請先設定 TRENDS_LIFF_URL 後即可一鍵開啟趨勢頁。"
-                )
-            ],
-        )
+    # if _matches_any(("歷史資料", "趨勢", "數據趨勢", "醫師報告", "醫生報告", "報告怎麼看")):
+    #     return _send(
+    #         images=["history_report.jpg"],
+    #         texts=[
+    #             (
+    #                 f"📈 查看骨骼健康數據：\n{trends_url}"
+    #                 if trends_url
+    #                 else "📈 已收到「歷史資料」需求。請先設定 TRENDS_LIFF_URL 後即可一鍵開啟趨勢頁。"
+    #             )
+    #         ],
+    #     )
 
     # if _matches_any(("骨骼檢測", "開始骨骼檢測", "拍照檢測", "拍照")):
     #     return _send(
@@ -1076,7 +1076,7 @@ def handle_follow(event):
         _pending_name[line_user_id] = True
         _reply_text(
             event.reply_token,
-            "👋 您好！歡迎使用 Epoch PINP 骨骼健康監測系統。\n\n"
+            "👋 您好！歡迎使用 Epoch P1NP 骨骼健康監測系統。\n\n"
             "請先告訴我受檢者的姓名（例如：王大明 先生），"
             "之後的健康報告會顯示此姓名供醫師辨識。\n\n"
             "📝 請直接回覆姓名：",
